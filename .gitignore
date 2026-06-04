@@ -1,0 +1,10 @@
+/target/
+/.venv/
+/.pytest_cache/
+/python/tonggraph/_tonggraph*.so
+/python/tonggraph/_tonggraph*.pyd
+/python/tonggraph/__pycache__/
+/tests/__pycache__/
+*.db
+*.db-shm
+*.db-wal

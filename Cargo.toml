@@ -1,0 +1,20 @@
+[package]
+name = "tonggraph"
+version = "0.1.0"
+edition = "2021"
+description = "A lightweight embedded graph compute database for large sparse graph networks."
+license = "Apache-2.0"
+
+[lib]
+name = "_tonggraph"
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+extension-module = ["pyo3/extension-module"]
+
+[dependencies]
+pyo3 = { version = "0.28.3" }
+
+[build-dependencies]
+pyo3-build-config = { version = "0.28.3" }

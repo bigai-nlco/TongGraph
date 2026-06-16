@@ -2,73 +2,81 @@
 
 ## Current Status
 
-TongGraph is not ready for production use. The current priority is to define a
-lightweight embedded graph compute database for large sparse graph networks,
-including the core storage model, in-memory retrieval kernel, and first Python
-API.
+TongGraph is not ready for production use. v0.1 is implemented for the current
+in-memory Rust/Python API surface. v0.2 and v0.3 are implemented for local
+SQLite-backed storage, property cataloging, persisted compute segments, snapshot
+reads, and graph compute runtime APIs.
+
+Status markers:
+
+- `[x]` implemented
+- `[ ]` not implemented
+- `[ ] (partial)` partially implemented
 
 ### v0.1: In-memory graph kernel
 
-- Rust core
-- Node and edge creation
-- Node and edge lookup
-- Internal ID mapping
-- CSR/CSC adjacency
-- Neighbor lookup
-- Edge-type-filtered neighbor lookup
-- K-hop traversal
-- Sparse frontier traversal
-- Python bindings
+- [x] Rust core
+- [x] Node and edge creation
+- [x] Node and edge lookup
+- [x] Internal ID mapping
+- [x] CSR/CSC adjacency
+- [x] Neighbor lookup
+- [x] Edge-type-filtered neighbor lookup
+- [x] K-hop traversal
+- [x] Sparse frontier traversal
+- [x] Python bindings
 
 ### v0.2: Persistence and indexing
 
-- SQLite-backed local metadata store
-- External ID to internal `u64` ID mapping
-- Local operation log / WAL-like append stream
-- Snapshot reads
-- Label index
-- Edge-type index
-- Property index
-- Property dictionary and typed value storage
-- Factor, evidence, and trace metadata tables
-- Immutable segment compaction
-- Storage backend abstraction for future LMDB, RocksDB, and custom segment
+- [x] SQLite-backed local metadata store
+- [x] External ID to internal `u64` ID mapping
+- [x] Local operation log / WAL-like append stream
+- [x] Snapshot reads
+- [x] Label index
+- [x] Edge-type index
+- [x] Property index
+- [x] Property dictionary and typed value storage
+- [x] Factor, evidence, and trace metadata tables
+- [x] Immutable segment compaction
+- [x] Storage backend abstraction for future LMDB, RocksDB, and custom segment
   backends
 
 SQLite is the default backend, but it is not the graph compute kernel.
-Traversal and algorithms should read from CSR/CSC segments plus a mutable delta
+Traversal and algorithms read from CSR/CSC segments plus a mutable delta
 overlay. SQLite remains the source of truth for metadata, properties, logs, and
-small records.
+small records. Compacted compute segments are stored in sidecar files next to
+SQLite databases.
 
 ### v0.3: Graph compute runtime
 
-- BFS
-- Shortest path
-- Connected components
-- PageRank
-- Random walk
-- Subgraph extraction
-- Batch compute API
+- [x] BFS
+- [x] Shortest path
+- [x] Connected components
+- [x] PageRank
+- [x] Random walk
+- [x] Subgraph extraction
+- [x] Batch compute API
 
 ### v0.4: Probabilistic propagation extension
 
-- Variables
-- Priors
-- Evidence
-- Probability transfer over weighted sparse edges
-- Local propagation over active sparse subgraphs
-- CPDs
-- Factors
-- Posterior queries
-- Belief propagation
-- Inference traces
+- [x] Variables
+- [x] Priors
+- [x] Evidence
+- [x] Probability transfer over weighted sparse edges
+- [ ] (partial) Local propagation over active sparse subgraphs: weighted sparse
+  propagation exists; active-subgraph compilation is still pending.
+- [ ] CPDs
+- [x] Factors
+- [ ] Posterior queries
+- [ ] Belief propagation
+- [x] Inference traces
 
 ### v0.5: Query layer
 
-- Minimal graph query DSL
-- Pattern query planning
-- Optional Cypher-like subset
-- Full-text and vector retrieval adapters
+- [ ] Minimal graph query DSL
+- [ ] Pattern query planning
+- [ ] Optional Cypher-like subset
+- [ ] Full-text and vector retrieval adapters
 
 ## Design Principles
 

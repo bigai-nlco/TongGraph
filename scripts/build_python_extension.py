@@ -7,6 +7,7 @@ import argparse
 import shutil
 import subprocess
 import sys
+import sysconfig
 from pathlib import Path
 
 
@@ -24,11 +25,19 @@ def main() -> None:
     profile = "release" if args.release else "debug"
     target_dir = root / "target" / profile
     source = find_extension_artifact(target_dir)
-    suffix = ".pyd" if sys.platform == "win32" else ".so"
+    suffix = sysconfig.get_config_var("EXT_SUFFIX")
+    if not suffix:
+        suffix = ".pyd" if sys.platform == "win32" else ".so"
     destination = root / "python" / "tonggraph" / f"_tonggraph{suffix}"
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source, destination)
     print(f"copied {source} -> {destination}")
+
+    generic_suffix = ".pyd" if sys.platform == "win32" else ".so"
+    generic_destination = root / "python" / "tonggraph" / f"_tonggraph{generic_suffix}"
+    if generic_destination != destination:
+        shutil.copy2(source, generic_destination)
+        print(f"copied {source} -> {generic_destination}")
 
 
 def find_extension_artifact(target_dir: Path) -> Path:
@@ -46,4 +55,3 @@ def find_extension_artifact(target_dir: Path) -> Path:
 
 if __name__ == "__main__":
     main()
-

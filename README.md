@@ -220,19 +220,58 @@ TongGraph exposes its Rust core to Python through PyO3.
 from tonggraph import Graph
 
 graph = Graph()
-alice = graph.add_node("alice", labels=["Person"], properties={"name": "Alice"})
+alice = graph.add_node(
+    "alice",
+    labels=["Person"],
+    properties={"name": "Alice", "rank": 1, "active": True},
+)
 bob = graph.add_node("bob", labels=["Person"], properties={"name": "Bob"})
-graph.add_edge(alice, bob, "KNOWS", properties={"probability": "0.8"})
+graph.add_edge(alice, bob, "KNOWS", properties={"probability": 0.8})
 
 assert graph.neighbors(alice) == [bob]
+assert graph.frontier([alice], 1) == [bob]
 assert graph.k_hop(alice, 1) == [bob]
+assert graph.bfs(alice) == [alice, bob]
+assert graph.shortest_path(alice, bob) == {"nodes": [alice, bob], "distance": 1.0}
+assert graph.nodes_with_property("active", True) == [alice]
 assert graph.propagate({alice: 1.0}, 1)[bob] == 0.8
+
+snapshot = graph.snapshot()
+assert snapshot.node_count() == graph.node_count()
 ```
 
 SQLite-backed local persistence is enabled by passing a database path:
 
 ```python
 graph = Graph("tonggraph.db")
+graph.compact()
+```
+
+Common graph algorithms are exposed through direct SDK calls and a batch compute
+API:
+
+```python
+graph.bfs(alice, max_depth=2)
+graph.shortest_path(alice, bob, weight_property="weight")
+graph.connected_components()
+graph.pagerank(iterations=20, tolerance=1e-9)
+graph.random_walk(alice, 10, seed=7)
+graph.subgraph([alice, bob])
+graph.compute_batch([
+    {"op": "bfs", "start": alice, "max_depth": 2},
+    {"op": "shortest_path", "start": alice, "target": bob},
+])
+```
+
+Metadata records for probabilistic extensions can be stored with the same local
+backend:
+
+```python
+entity = graph.add_node("entity:1")
+variable = graph.add_variable("binary", owner_id=entity, prior={"p": 0.2})
+factor = graph.add_factor([variable], [], "likelihood", parameters={"weight": 1.0})
+evidence = graph.add_evidence(variable, {"observed": True})
+trace = graph.add_trace({"step": 1})
 ```
 
 ## Development
@@ -247,6 +286,15 @@ Run the Rust test suite:
 
 ```bash
 cargo test
+```
+
+Build the local Python extension, run Python tests, and benchmark graph
+algorithms:
+
+```bash
+uv run python scripts/build_python_extension.py
+uv run pytest
+uv run python scripts/benchmark_algorithms.py --nodes 1000 --degree 4 --repeat 2
 ```
 
 Build the PyO3 extension in-place for local source-tree testing:

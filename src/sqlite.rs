@@ -1,9 +1,11 @@
 use crate::codec::{
-    decode_list, decode_map, decode_u64_list, encode_list, encode_map, encode_u64_list,
+    decode_f64_list, decode_list, decode_map, decode_u64_list, encode_f64_list, encode_list,
+    encode_map, encode_u64_list,
 };
 use crate::core::segment::ComputeSegment;
 use crate::models::{
-    EdgeRecord, EvidenceRecord, FactorRecord, NodeRecord, PropertyMap, TraceRecord, VariableRecord,
+    EdgeRecord, EvidenceRecord, FactorRecord, FactorTableRecord, NodeRecord, PropertyMap,
+    TraceRecord, VariableRecord,
 };
 use std::ffi::{c_char, c_int, c_uchar, c_void, CStr, CString};
 use std::fs;
@@ -63,12 +65,16 @@ pub(crate) trait GraphStore {
     fn insert_edge(&self, edge: &EdgeRecord) -> Result<(), String>;
     fn insert_variable(&self, variable: &VariableRecord) -> Result<(), String>;
     fn insert_factor(&self, factor: &FactorRecord) -> Result<(), String>;
+    fn insert_factor_table(&self, factor_table: &FactorTableRecord) -> Result<(), String>;
     fn insert_evidence(&self, evidence: &EvidenceRecord) -> Result<(), String>;
     fn insert_trace(&self, trace: &TraceRecord) -> Result<(), String>;
     fn load_nodes(&self) -> Result<Vec<NodeRecord>, String>;
     fn load_edges(&self) -> Result<Vec<EdgeRecord>, String>;
     fn load_variables(&self) -> Result<Vec<VariableRecord>, String>;
     fn load_factors(&self) -> Result<Vec<FactorRecord>, String>;
+    fn load_factor_tables(&self) -> Result<Vec<FactorTableRecord>, String>;
+    fn load_posteriors(&self) -> Result<Vec<(u64, Vec<f64>)>, String>;
+    fn upsert_posterior(&self, variable_id: u64, values: &[f64]) -> Result<(), String>;
     fn load_evidence(&self) -> Result<Vec<EvidenceRecord>, String>;
     fn load_traces(&self) -> Result<Vec<TraceRecord>, String>;
     fn load_segment(
@@ -163,6 +169,7 @@ impl SqliteStore {
             stmt.bind_text(4, &encode_map(&variable.prior))?;
             stmt.bind_text(5, &encode_map(&variable.posterior))?;
             stmt.step_done()?;
+            self.insert_variable_state_rows(variable.id, &variable.states)?;
             self.append_op("add_variable", variable.id, &variable.domain)?;
             Ok(())
         })();
@@ -185,6 +192,21 @@ impl SqliteStore {
             Ok(())
         })();
         self.finish_transaction(result)
+    }
+
+    pub(crate) fn insert_factor_table(
+        &self,
+        factor_table: &FactorTableRecord,
+    ) -> Result<(), String> {
+        let mut stmt = self.prepare(
+            "INSERT OR REPLACE INTO factor_tables (factor_id, variables, values_text, is_cpd)
+             VALUES (?1, ?2, ?3, ?4);",
+        )?;
+        stmt.bind_i64(1, factor_table.factor_id)?;
+        stmt.bind_text(2, &encode_u64_list(&factor_table.variables))?;
+        stmt.bind_text(3, &encode_f64_list(&factor_table.values))?;
+        stmt.bind_i64(4, if factor_table.is_cpd { 1 } else { 0 })?;
+        stmt.step_done()
     }
 
     pub(crate) fn insert_evidence(&self, evidence: &EvidenceRecord) -> Result<(), String> {
@@ -270,12 +292,16 @@ impl SqliteStore {
                     id: stmt.column_i64(0)?,
                     owner_id: stmt.column_optional_i64(1)?,
                     domain: stmt.column_text(2)?,
+                    states: Vec::new(),
                     prior: decode_map(&stmt.column_text(3)?)?,
                     posterior: decode_map(&stmt.column_text(4)?)?,
                 }),
                 SQLITE_DONE => break,
                 rc => return Err(format!("unexpected SQLite step result {rc}")),
             }
+        }
+        for variable in &mut variables {
+            variable.states = self.load_variable_states(variable.id, &variable.domain)?;
         }
         Ok(variables)
     }
@@ -299,6 +325,53 @@ impl SqliteStore {
             }
         }
         Ok(factors)
+    }
+
+    pub(crate) fn load_factor_tables(&self) -> Result<Vec<FactorTableRecord>, String> {
+        let mut stmt = self.prepare(
+            "SELECT factor_id, variables, values_text, is_cpd FROM factor_tables ORDER BY factor_id ASC;",
+        )?;
+        let mut factor_tables = Vec::new();
+        loop {
+            match stmt.step()? {
+                SQLITE_ROW => factor_tables.push(FactorTableRecord {
+                    factor_id: stmt.column_i64(0)?,
+                    variables: decode_u64_list(&stmt.column_text(1)?)?,
+                    values: decode_f64_list(&stmt.column_text(2)?)?,
+                    is_cpd: stmt.column_i64(3)? != 0,
+                }),
+                SQLITE_DONE => break,
+                rc => return Err(format!("unexpected SQLite step result {rc}")),
+            }
+        }
+        Ok(factor_tables)
+    }
+
+    pub(crate) fn load_posteriors(&self) -> Result<Vec<(u64, Vec<f64>)>, String> {
+        let mut stmt = self.prepare(
+            "SELECT variable_id, values_text FROM latest_posteriors ORDER BY variable_id ASC;",
+        )?;
+        let mut posteriors = Vec::new();
+        loop {
+            match stmt.step()? {
+                SQLITE_ROW => {
+                    posteriors.push((stmt.column_i64(0)?, decode_f64_list(&stmt.column_text(1)?)?))
+                }
+                SQLITE_DONE => break,
+                rc => return Err(format!("unexpected SQLite step result {rc}")),
+            }
+        }
+        Ok(posteriors)
+    }
+
+    pub(crate) fn upsert_posterior(&self, variable_id: u64, values: &[f64]) -> Result<(), String> {
+        let mut stmt = self.prepare(
+            "INSERT INTO latest_posteriors (variable_id, values_text) VALUES (?1, ?2)
+             ON CONFLICT(variable_id) DO UPDATE SET values_text = excluded.values_text;",
+        )?;
+        stmt.bind_i64(1, variable_id)?;
+        stmt.bind_text(2, &encode_f64_list(values))?;
+        stmt.step_done()
     }
 
     pub(crate) fn load_evidence(&self) -> Result<Vec<EvidenceRecord>, String> {
@@ -459,12 +532,28 @@ impl SqliteStore {
                 prior TEXT NOT NULL,
                 posterior TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS variable_states (
+                variable_id INTEGER NOT NULL,
+                state_index INTEGER NOT NULL,
+                state TEXT NOT NULL,
+                PRIMARY KEY (variable_id, state_index)
+            );
             CREATE TABLE IF NOT EXISTS factors (
                 id INTEGER PRIMARY KEY,
                 input_variables TEXT NOT NULL,
                 output_variables TEXT NOT NULL,
                 function TEXT NOT NULL,
                 parameters TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS factor_tables (
+                factor_id INTEGER PRIMARY KEY,
+                variables TEXT NOT NULL,
+                values_text TEXT NOT NULL,
+                is_cpd INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS latest_posteriors (
+                variable_id INTEGER PRIMARY KEY,
+                values_text TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS evidence (
                 id INTEGER PRIMARY KEY,
@@ -486,6 +575,7 @@ impl SqliteStore {
             CREATE INDEX IF NOT EXISTS idx_property_keys_scope ON property_keys(scope, key);
             CREATE INDEX IF NOT EXISTS idx_property_values_lookup ON property_values(scope, key, value_type, value_text);
             CREATE INDEX IF NOT EXISTS idx_variables_owner ON variables(owner_id);
+            CREATE INDEX IF NOT EXISTS idx_variable_states_variable ON variable_states(variable_id, state_index);
             CREATE INDEX IF NOT EXISTS idx_evidence_variable ON evidence(variable_id);
             CREATE INDEX IF NOT EXISTS idx_op_log_op ON op_log(op);
             ",
@@ -527,6 +617,45 @@ impl SqliteStore {
             )?;
         }
         Ok(())
+    }
+
+    fn insert_variable_state_rows(
+        &self,
+        variable_id: u64,
+        states: &[String],
+    ) -> Result<(), String> {
+        let mut stmt = self.prepare(
+            "INSERT OR REPLACE INTO variable_states (variable_id, state_index, state)
+             VALUES (?1, ?2, ?3);",
+        )?;
+        for (index, state) in states.iter().enumerate() {
+            stmt.bind_i64(1, variable_id)?;
+            stmt.bind_i64(2, index as u64)?;
+            stmt.bind_text(3, state)?;
+            stmt.step_done()?;
+            stmt.reset()?;
+        }
+        Ok(())
+    }
+
+    fn load_variable_states(&self, variable_id: u64, domain: &str) -> Result<Vec<String>, String> {
+        let mut stmt = self.prepare(
+            "SELECT state FROM variable_states WHERE variable_id = ?1 ORDER BY state_index ASC;",
+        )?;
+        stmt.bind_i64(1, variable_id)?;
+        let mut states = Vec::new();
+        loop {
+            match stmt.step()? {
+                SQLITE_ROW => states.push(stmt.column_text(0)?),
+                SQLITE_DONE => break,
+                rc => return Err(format!("unexpected SQLite step result {rc}")),
+            }
+        }
+        if states.is_empty() && domain == "binary" {
+            Ok(vec!["false".to_string(), "true".to_string()])
+        } else {
+            Ok(states)
+        }
     }
 
     fn insert_edge_property_rows(
@@ -690,6 +819,10 @@ impl GraphStore for SqliteStore {
         Self::insert_factor(self, factor)
     }
 
+    fn insert_factor_table(&self, factor_table: &FactorTableRecord) -> Result<(), String> {
+        Self::insert_factor_table(self, factor_table)
+    }
+
     fn insert_evidence(&self, evidence: &EvidenceRecord) -> Result<(), String> {
         Self::insert_evidence(self, evidence)
     }
@@ -712,6 +845,18 @@ impl GraphStore for SqliteStore {
 
     fn load_factors(&self) -> Result<Vec<FactorRecord>, String> {
         Self::load_factors(self)
+    }
+
+    fn load_factor_tables(&self) -> Result<Vec<FactorTableRecord>, String> {
+        Self::load_factor_tables(self)
+    }
+
+    fn load_posteriors(&self) -> Result<Vec<(u64, Vec<f64>)>, String> {
+        Self::load_posteriors(self)
+    }
+
+    fn upsert_posterior(&self, variable_id: u64, values: &[f64]) -> Result<(), String> {
+        Self::upsert_posterior(self, variable_id, values)
     }
 
     fn load_evidence(&self) -> Result<Vec<EvidenceRecord>, String> {

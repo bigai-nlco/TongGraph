@@ -1,0 +1,23 @@
+# GraphSnapshot
+
+`GraphSnapshot` is a read-only copy of graph state. It supports lookup and
+compute methods without mutating the original graph or carrying a persistence
+handle.
+
+## Method Guides
+
+| Methods | Design reference |
+|---|---|
+| `neighbors`, `k_hop`, `frontier` | [Neighbor expansion and k-hop traversal](../design/algorithms.md#neighbor-expansion) |
+| `bfs` | [Breadth-first search](../design/algorithms.md#breadth-first-search) |
+| `shortest_path` | [Weighted shortest path](../design/algorithms.md#weighted-shortest-path) |
+| `connected_components` | [Connected components](../design/algorithms.md#connected-components) |
+| `pagerank` | [PageRank](../design/algorithms.md#pagerank) |
+| `random_walk` | [Random walk](../design/algorithms.md#random-walk) |
+| `subgraph`, `compute_batch` | [Batch compute and snapshots](../design/algorithms.md#batch-compute) |
+
+## Reference
+
+::: tonggraph.GraphSnapshot
+    options:
+      heading_level: 3

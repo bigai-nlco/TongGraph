@@ -1,5 +1,6 @@
 mod compute;
 mod graph;
+mod inference;
 mod properties;
 mod records;
 mod snapshot;

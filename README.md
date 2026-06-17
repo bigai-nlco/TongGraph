@@ -1,5 +1,9 @@
 # TongGraph
 
+<p align="center">
+  <img src="docs/assets/tonggraph-logo.png" alt="TongGraph logo" width="640">
+</p>
+
 TongGraph is a lightweight, high-performance embedded graph compute database for
 large sparse graph networks, with optional probabilistic propagation.
 
@@ -274,6 +278,23 @@ evidence = graph.add_evidence(variable, {"observed": True})
 trace = graph.add_trace({"step": 1})
 ```
 
+Discrete factor tables and CPDs can be queried with active-subgraph belief
+propagation:
+
+```python
+source = graph.add_node("source")
+target = graph.add_node("target")
+graph.add_edge(source, target, "LINK")
+
+parent = graph.add_variable("binary", owner_id=source, prior={"p": 0.6})
+child = graph.add_variable("binary", owner_id=target)
+graph.add_cpd(child, [parent], [0.9, 0.1, 0.2, 0.8])
+
+active = graph.compile_active_subgraph([child], evidence={parent: "true"})
+result = graph.belief_propagation([child], evidence={parent: "true"}, persist=True)
+posterior = graph.posterior(child)
+```
+
 ## Development
 
 Sync the Python development environment with uv:
@@ -295,6 +316,7 @@ algorithms:
 uv run python scripts/build_python_extension.py
 uv run pytest
 uv run python scripts/benchmark_algorithms.py --nodes 1000 --degree 4 --repeat 2
+uv run python scripts/benchmark_belief_propagation.py --nodes 1000 --degree 4 --repeat 2
 ```
 
 Build the PyO3 extension in-place for local source-tree testing:

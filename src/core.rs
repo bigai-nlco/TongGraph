@@ -2,6 +2,7 @@ mod adjacency;
 mod algorithms;
 mod direction;
 mod entities;
+mod inference;
 mod lifecycle;
 mod metadata;
 mod properties;
@@ -13,9 +14,11 @@ mod traversal;
 mod tests;
 
 pub(crate) use algorithms::{ComputeJob, ComputeResult, ShortestPath};
+pub(crate) use inference::{ActiveSubgraph, BeliefPropagationResult};
 
 use crate::models::{
-    EdgeRecord, EvidenceRecord, FactorRecord, NodeRecord, TraceRecord, VariableRecord,
+    EdgeRecord, EvidenceRecord, FactorRecord, FactorTableRecord, NodeRecord, TraceRecord,
+    VariableRecord,
 };
 use crate::sqlite::GraphStore;
 use properties::PropertyIndexKey;
@@ -27,6 +30,8 @@ pub(crate) struct GraphCore {
     edges: Vec<Option<EdgeRecord>>,
     variables: Vec<Option<VariableRecord>>,
     factors: Vec<Option<FactorRecord>>,
+    factor_tables: HashMap<u64, FactorTableRecord>,
+    posteriors: HashMap<u64, Vec<f64>>,
     evidence: Vec<Option<EvidenceRecord>>,
     traces: Vec<Option<TraceRecord>>,
     base_segment: ComputeSegment,

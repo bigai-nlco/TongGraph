@@ -1,0 +1,66 @@
+.tg-hero {
+  display: grid;
+  gap: 1rem;
+  margin: 1.5rem 0 2rem;
+  padding: 1.4rem;
+  border: 1px solid color-mix(in srgb, var(--md-primary-fg-color) 24%, transparent);
+  border-radius: 0.45rem;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--md-primary-fg-color) 12%, transparent), transparent 55%),
+    linear-gradient(315deg, color-mix(in srgb, var(--md-accent-fg-color) 14%, transparent), transparent 50%);
+}
+
+.tg-hero h1 {
+  margin-bottom: 0;
+}
+
+.tg-logo {
+  display: inline-flex;
+  max-width: 100%;
+  margin: 0;
+}
+
+.tg-logo img {
+  display: block;
+  width: min(34rem, 100%);
+  height: auto;
+}
+
+[data-md-color-scheme="slate"] .tg-logo {
+  padding: 0.3rem 0.45rem;
+  border-radius: 0.35rem;
+  background: #fff;
+}
+
+.tg-kicker {
+  margin: 0;
+  color: var(--md-default-fg-color--light);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.tg-tagline {
+  max-width: 48rem;
+  margin: 0;
+  font-size: 1.08rem;
+}
+
+.tg-pill-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.tg-pill {
+  padding: 0.18rem 0.5rem;
+  border: 1px solid color-mix(in srgb, var(--md-default-fg-color) 18%, transparent);
+  border-radius: 999px;
+  color: var(--md-default-fg-color--light);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.tg-output {
+  margin-top: -0.65rem;
+}

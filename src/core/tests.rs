@@ -218,11 +218,280 @@ fn sqlite_graph_auto_compacts_large_delta_overlay() {
     cleanup_db(&path);
 }
 
+#[test]
+fn belief_propagation_conditions_binary_chain_exactly() {
+    let mut graph = GraphCore::new();
+    let parent = graph
+        .add_variable(
+            None,
+            "binary".to_string(),
+            None,
+            map([("p", "0.6")]),
+            map([]),
+        )
+        .unwrap();
+    let child = graph
+        .add_variable(None, "binary".to_string(), None, map([]), map([]))
+        .unwrap();
+    graph
+        .add_cpd(child, vec![parent], vec![0.9, 0.1, 0.2, 0.8])
+        .unwrap();
+
+    let result = graph
+        .belief_propagation(
+            Some(&[child]),
+            &HashMap::from([(parent, "true".to_string())]),
+            2,
+            100,
+            1e-12,
+            0.0,
+            false,
+        )
+        .unwrap();
+    let child_belief = result.beliefs.get(&child).unwrap();
+    assert_close(*child_belief.get("false").unwrap(), 0.2);
+    assert_close(*child_belief.get("true").unwrap(), 0.8);
+    assert_eq!(result.schedule, "residual_async");
+    assert!(result.converged);
+}
+
+#[test]
+fn categorical_cpd_uses_child_fastest_order() {
+    let mut graph = GraphCore::new();
+    let switch = graph
+        .add_variable(None, "binary".to_string(), None, map([]), map([]))
+        .unwrap();
+    let weather = graph
+        .add_variable(
+            None,
+            "categorical".to_string(),
+            Some(vec![
+                "sun".to_string(),
+                "rain".to_string(),
+                "snow".to_string(),
+            ]),
+            map([]),
+            map([]),
+        )
+        .unwrap();
+    graph
+        .add_cpd(
+            weather,
+            vec![switch],
+            vec![
+                0.7, 0.2, 0.1, // switch=false
+                0.1, 0.3, 0.6, // switch=true
+            ],
+        )
+        .unwrap();
+
+    let result = graph
+        .belief_propagation(
+            Some(&[weather]),
+            &HashMap::from([(switch, "true".to_string())]),
+            2,
+            100,
+            1e-12,
+            0.0,
+            false,
+        )
+        .unwrap();
+    let weather_belief = result.beliefs.get(&weather).unwrap();
+    assert_close(*weather_belief.get("sun").unwrap(), 0.1);
+    assert_close(*weather_belief.get("rain").unwrap(), 0.3);
+    assert_close(*weather_belief.get("snow").unwrap(), 0.6);
+}
+
+#[test]
+fn loopy_belief_propagation_returns_normalized_metadata() {
+    let mut graph = GraphCore::new();
+    let a = graph
+        .add_variable(
+            None,
+            "binary".to_string(),
+            None,
+            map([("p", "0.55")]),
+            map([]),
+        )
+        .unwrap();
+    let b = graph
+        .add_variable(None, "binary".to_string(), None, map([]), map([]))
+        .unwrap();
+    let c = graph
+        .add_variable(None, "binary".to_string(), None, map([]), map([]))
+        .unwrap();
+    graph
+        .add_factor_table(vec![a, b], vec![2.0, 1.0, 1.0, 2.0])
+        .unwrap();
+    graph
+        .add_factor_table(vec![b, c], vec![2.0, 1.0, 1.0, 2.0])
+        .unwrap();
+    graph
+        .add_factor_table(vec![c, a], vec![2.0, 1.0, 1.0, 2.0])
+        .unwrap();
+
+    let result = graph
+        .belief_propagation(None, &HashMap::new(), 2, 200, 1e-9, 0.2, false)
+        .unwrap();
+    assert_eq!(result.beliefs.len(), 3);
+    assert_eq!(result.active.factors.len(), 3);
+    assert_eq!(result.schedule, "residual_async");
+    assert!(result.max_residual.is_finite());
+    assert!(result.messages_updated <= result.iterations);
+    for belief in result.beliefs.values() {
+        assert_close(belief.values().sum::<f64>(), 1.0);
+    }
+}
+
+#[test]
+fn active_subgraph_closes_over_factors_and_caps_nodes() {
+    let mut graph = GraphCore::new();
+    let a = graph.add_node(None, Vec::new(), map([])).unwrap();
+    let b = graph.add_node(None, Vec::new(), map([])).unwrap();
+    let c = graph.add_node(None, Vec::new(), map([])).unwrap();
+    graph
+        .add_edge(a, b, "P".to_string(), map([("probability", "0.5")]))
+        .unwrap();
+    graph
+        .add_edge(b, c, "P".to_string(), map([("probability", "0.5")]))
+        .unwrap();
+    let va = graph
+        .add_variable(Some(a), "binary".to_string(), None, map([]), map([]))
+        .unwrap();
+    let vb = graph
+        .add_variable(Some(b), "binary".to_string(), None, map([]), map([]))
+        .unwrap();
+    let vc = graph
+        .add_variable(Some(c), "binary".to_string(), None, map([]), map([]))
+        .unwrap();
+    let factor = graph
+        .add_factor_table(vec![vb, vc], vec![1.0, 0.5, 0.5, 1.0])
+        .unwrap();
+
+    let active = graph
+        .compile_active_subgraph(&[va], &HashMap::new(), 1, 2, 10)
+        .unwrap();
+    assert_eq!(active.graph_nodes, vec![a, b]);
+    assert_eq!(active.factors, vec![factor]);
+    assert!(active.variables.contains(&vc));
+    assert_eq!(active.boundary_variables, vec![vc]);
+    assert!(active.truncated);
+
+    let propagated = graph
+        .local_propagate(
+            &HashMap::from([(a, 1.0)]),
+            1,
+            None,
+            Some("P"),
+            "probability",
+            1.0,
+        )
+        .unwrap();
+    assert_eq!(propagated.get(&a), Some(&1.0));
+    assert_eq!(propagated.get(&b), Some(&0.5));
+    assert!(!propagated.contains_key(&c));
+
+    assert!(graph
+        .local_propagate(
+            &HashMap::from([(a, -1.0)]),
+            1,
+            None,
+            Some("P"),
+            "probability",
+            1.0,
+        )
+        .is_err());
+    assert!(graph
+        .local_propagate(
+            &HashMap::from([(a, 1.0)]),
+            1,
+            None,
+            Some("P"),
+            "probability",
+            1.5,
+        )
+        .is_err());
+}
+
+#[test]
+fn posterior_persists_after_belief_propagation_and_reopen() {
+    let path = temp_db_path("tonggraph-bp-posterior");
+    let variable;
+    {
+        let mut graph = GraphCore::open(path.to_str().unwrap()).unwrap();
+        variable = graph
+            .add_variable(
+                None,
+                "binary".to_string(),
+                None,
+                map([("p", "0.25")]),
+                map([]),
+            )
+            .unwrap();
+        let result = graph
+            .belief_propagation(
+                Some(&[variable]),
+                &HashMap::from([(variable, "true".to_string())]),
+                2,
+                20,
+                1e-9,
+                0.0,
+                true,
+            )
+            .unwrap();
+        assert_eq!(result.trace_id, Some(0));
+    }
+
+    let reopened = GraphCore::open(path.to_str().unwrap()).unwrap();
+    let posterior = reopened.posterior(variable).unwrap();
+    assert_close(*posterior.get("false").unwrap(), 0.0);
+    assert_close(*posterior.get("true").unwrap(), 1.0);
+    assert_eq!(reopened.trace_count(), 1);
+    cleanup_db(&path);
+}
+
+#[test]
+fn invalid_domains_and_potentials_are_rejected() {
+    let mut graph = GraphCore::new();
+    assert!(graph
+        .add_variable(None, "categorical".to_string(), None, map([]), map([]),)
+        .is_err());
+    let variable = graph
+        .add_variable(None, "binary".to_string(), None, map([]), map([]))
+        .unwrap();
+    assert!(graph
+        .add_factor_table(vec![variable], vec![0.0, 0.0])
+        .is_err());
+    assert!(graph
+        .add_factor_table(vec![variable], vec![1.0, -1.0])
+        .is_err());
+    assert!(graph
+        .add_factor_table(vec![variable, variable], vec![1.0, 0.0, 0.0, 1.0])
+        .is_err());
+
+    let parent = graph
+        .add_variable(None, "binary".to_string(), None, map([]), map([]))
+        .unwrap();
+    let child = graph
+        .add_variable(None, "binary".to_string(), None, map([]), map([]))
+        .unwrap();
+    assert!(graph
+        .add_cpd(child, vec![parent], vec![90.0, 10.0, 2.0, 8.0])
+        .is_err());
+}
+
 fn map<const N: usize>(values: [(&str, &str); N]) -> PropertyMap {
     values
         .into_iter()
         .map(|(key, value)| (key.to_string(), PropertyValue::String(value.to_string())))
         .collect()
+}
+
+fn assert_close(actual: f64, expected: f64) {
+    assert!(
+        (actual - expected).abs() < 1e-9,
+        "expected {actual} to be close to {expected}"
+    );
 }
 
 fn temp_db_path(name: &str) -> std::path::PathBuf {

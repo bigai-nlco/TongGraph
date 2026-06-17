@@ -1,0 +1,116 @@
+site_name: TongGraph
+site_description: Python-first documentation for the TongGraph embedded graph compute database.
+site_author: BIGAI TongAgents Team
+strict: true
+exclude_docs: |
+  codebase/**
+
+theme:
+  name: material
+  language: en
+  icon:
+    logo: material/graph-outline
+    repo: fontawesome/brands/github
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: teal
+      accent: amber
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: teal
+      accent: amber
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.indexes
+    - navigation.top
+    - toc.follow
+    - search.highlight
+    - search.suggest
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+
+nav:
+  - Overview:
+      - Overview: index.md
+      - Quickstart: quickstart.md
+  - API:
+      - API Reference: api.md
+      - Graph: api/graph.md
+      - GraphSnapshot: api/graph-snapshot.md
+      - Node: api/node.md
+      - Edge: api/edge.md
+      - Variable: api/variable.md
+      - Factor: api/factor.md
+      - Evidence: api/evidence.md
+      - Trace: api/trace.md
+  - Design:
+      - Architecture: design/architecture.md
+      - Algorithms: design/algorithms.md
+      - Belief Propagation: design/belief-propagation.md
+      - Persistence: design/persistence.md
+  - Examples: examples.md
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths:
+            - python
+          options:
+            docstring_style: google
+            inherited_members: true
+            members_order: source
+            merge_init_into_class: true
+            separate_signature: true
+            show_bases: false
+            show_if_no_docstring: false
+            show_root_heading: true
+            show_source: false
+            show_signature_annotations: true
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.blocks.caption
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+
+extra_css:
+  - stylesheets/extra.css
+
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js

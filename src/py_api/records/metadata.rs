@@ -8,6 +8,7 @@ pub(crate) struct PyVariable {
     id: u64,
     owner_id: Option<u64>,
     domain: String,
+    states: Vec<String>,
     prior: PropertyMap,
     posterior: PropertyMap,
 }
@@ -30,6 +31,11 @@ impl PyVariable {
     }
 
     #[getter]
+    fn states(&self) -> Vec<String> {
+        self.states.clone()
+    }
+
+    #[getter]
     fn prior(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         property_map_to_py(py, &self.prior)
     }
@@ -46,6 +52,7 @@ impl From<VariableRecord> for PyVariable {
             id: value.id,
             owner_id: value.owner_id,
             domain: value.domain,
+            states: value.states,
             prior: value.prior,
             posterior: value.posterior,
         }

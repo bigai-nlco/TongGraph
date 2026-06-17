@@ -5,7 +5,11 @@
 /python/tonggraph/_tonggraph*.pyd
 /python/tonggraph/__pycache__/
 /tests/__pycache__/
+/site/
+/tmp/
 *.db
 *.db-shm
 *.db-wal
 *.segments/
+output/
+docs/codebase/

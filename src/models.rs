@@ -61,6 +61,7 @@ pub(crate) struct VariableRecord {
     pub(crate) id: u64,
     pub(crate) owner_id: Option<u64>,
     pub(crate) domain: String,
+    pub(crate) states: Vec<String>,
     pub(crate) prior: PropertyMap,
     pub(crate) posterior: PropertyMap,
 }
@@ -85,4 +86,12 @@ pub(crate) struct EvidenceRecord {
 pub(crate) struct TraceRecord {
     pub(crate) id: u64,
     pub(crate) payload: PropertyMap,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct FactorTableRecord {
+    pub(crate) factor_id: u64,
+    pub(crate) variables: Vec<u64>,
+    pub(crate) values: Vec<f64>,
+    pub(crate) is_cpd: bool,
 }

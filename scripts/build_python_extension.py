@@ -31,12 +31,14 @@ def main() -> None:
     destination = root / "python" / "tonggraph" / f"_tonggraph{suffix}"
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source, destination)
+    sign_extension(destination)
     print(f"copied {source} -> {destination}")
 
     generic_suffix = ".pyd" if sys.platform == "win32" else ".so"
     generic_destination = root / "python" / "tonggraph" / f"_tonggraph{generic_suffix}"
     if generic_destination != destination:
         shutil.copy2(source, generic_destination)
+        sign_extension(generic_destination)
         print(f"copied {source} -> {generic_destination}")
 
 
@@ -51,6 +53,12 @@ def find_extension_artifact(target_dir: Path) -> Path:
         raise FileNotFoundError(f"no TongGraph extension artifact found in {target_dir}")
     candidates.sort(key=lambda path: path.stat().st_mtime, reverse=True)
     return candidates[0]
+
+
+def sign_extension(path: Path) -> None:
+    if sys.platform != "darwin":
+        return
+    subprocess.run(["codesign", "--force", "--sign", "-", str(path)], check=True)
 
 
 if __name__ == "__main__":

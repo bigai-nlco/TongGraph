@@ -64,6 +64,14 @@ pub(crate) fn encode_u64_list(values: &[u64]) -> String {
         .join(",")
 }
 
+pub(crate) fn encode_f64_list(values: &[f64]) -> String {
+    values
+        .iter()
+        .map(f64::to_string)
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
 pub(crate) fn decode_u64_list(encoded: &str) -> Result<Vec<u64>, String> {
     if encoded.is_empty() {
         return Ok(Vec::new());
@@ -74,6 +82,25 @@ pub(crate) fn decode_u64_list(encoded: &str) -> Result<Vec<u64>, String> {
             value
                 .parse::<u64>()
                 .map_err(|_| format!("invalid encoded u64 value {value:?}"))
+        })
+        .collect()
+}
+
+pub(crate) fn decode_f64_list(encoded: &str) -> Result<Vec<f64>, String> {
+    if encoded.is_empty() {
+        return Ok(Vec::new());
+    }
+    encoded
+        .split(',')
+        .map(|value| {
+            let parsed = value
+                .parse::<f64>()
+                .map_err(|_| format!("invalid encoded f64 value {value:?}"))?;
+            if parsed.is_finite() {
+                Ok(parsed)
+            } else {
+                Err(format!("encoded f64 value {value:?} must be finite"))
+            }
         })
         .collect()
 }

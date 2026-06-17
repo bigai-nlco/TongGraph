@@ -18,6 +18,9 @@ python-source = "python"
 
 [dependency-groups]
 dev = [
+    "mkdocs>=1.6.1",
+    "mkdocs-material>=9.6.0",
+    "mkdocstrings[python]>=0.30.0",
     "pytest>=9.0.3",
 ]
 

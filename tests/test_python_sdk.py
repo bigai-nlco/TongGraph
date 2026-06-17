@@ -126,6 +126,7 @@ def test_sqlite_backed_graph_reopens_with_indexes(tmp_path: Path) -> None:
     assert reopened.get_edge(0).properties["probability"] == 0.75
     assert reopened.get_variable(variable).prior == {"p": 0.25}
     assert reopened.get_variable(variable).posterior == {"p": 0.5}
+    assert reopened.posterior(variable) == {"false": 0.5, "true": 0.5}
     assert reopened.get_factor(factor).parameters == {"weight": 2}
     assert reopened.get_evidence(evidence).payload == {"observed": True}
     assert reopened.get_trace(trace).payload == {"step": 1, "note": "initial"}
@@ -207,3 +208,87 @@ def test_weighted_probability_transfer_over_sparse_edges() -> None:
     assert result[a] == 1.0
     assert result[b] == 0.5
     assert result[c] == 0.125
+
+    local = graph.local_propagate({a: 1.0}, radius=1, edge_type="P")
+    assert local[a] == 1.0
+    assert local[b] == 0.5
+    assert c not in local
+    with pytest.raises(ValueError, match="finite and non-negative"):
+        graph.local_propagate({a: -1.0}, radius=1)
+    with pytest.raises(ValueError, match="damping"):
+        graph.local_propagate({a: 1.0}, radius=1, damping=1.5)
+
+
+def test_belief_propagation_api_posterior_and_reopen(tmp_path: Path) -> None:
+    db_path = tmp_path / "belief.db"
+    graph = Graph(str(db_path))
+    source = graph.add_node("source")
+    target = graph.add_node("target")
+    graph.add_edge(source, target, "LINK")
+    parent = graph.add_variable("binary", source, {"p": 0.6}, {})
+    child = graph.add_variable("binary", owner_id=target)
+    weather = graph.add_variable(
+        "categorical",
+        states=["sun", "rain", "snow"],
+        prior={"sun": 0.5, "rain": 0.25, "snow": 0.25},
+    )
+
+    assert graph.get_variable(parent).states == ["false", "true"]
+    assert graph.get_variable(weather).states == ["sun", "rain", "snow"]
+    assert graph.posterior(child) == {"false": 0.5, "true": 0.5}
+
+    factor = graph.add_cpd(child, [parent], [0.9, 0.1, 0.2, 0.8])
+    active = graph.compile_active_subgraph([child], evidence={parent: "true"}, radius=1)
+    assert active["variables"] == [parent, child]
+    assert active["factors"] == [factor]
+    assert active["truncated"] is False
+
+    result = graph.belief_propagation(
+        [child],
+        evidence={parent: "true"},
+        tolerance=1e-12,
+        damping=0.0,
+        persist=False,
+    )
+    assert result["schedule"] == "residual_async"
+    assert result["converged"] is True
+    assert result["beliefs"][child]["false"] == pytest.approx(0.2)
+    assert result["beliefs"][child]["true"] == pytest.approx(0.8)
+    assert graph.posterior(child) == {"false": 0.5, "true": 0.5}
+
+    persisted = graph.belief_propagation(
+        [child],
+        evidence={parent: "true"},
+        tolerance=1e-12,
+        damping=0.0,
+        persist=True,
+    )
+    assert persisted["trace_id"] == 0
+    assert graph.posterior(child)["true"] == pytest.approx(0.8)
+    del graph
+
+    reopened = Graph(str(db_path))
+    assert reopened.posterior(child)["false"] == pytest.approx(0.2)
+    assert reopened.posterior(child)["true"] == pytest.approx(0.8)
+    assert reopened.trace_count() == 1
+
+
+def test_belief_propagation_rejects_invalid_domains_and_potentials() -> None:
+    graph = Graph()
+    with pytest.raises(ValueError, match="states are required"):
+        graph.add_variable("categorical")
+
+    variable = graph.add_variable("binary")
+    with pytest.raises(ValueError, match="all zero"):
+        graph.add_factor_table([variable], [0.0, 0.0])
+    with pytest.raises(ValueError, match="finite and non-negative"):
+        graph.add_factor_table([variable], [1.0, float("nan")])
+    with pytest.raises(ValueError, match="duplicate variable"):
+        graph.add_factor_table([variable, variable], [1.0, 0.0, 0.0, 1.0])
+
+    parent = graph.add_variable("binary")
+    child = graph.add_variable("binary")
+    with pytest.raises(ValueError, match="sum to 1.0"):
+        graph.add_cpd(child, [parent], [90.0, 10.0, 2.0, 8.0])
+    with pytest.raises(ValueError, match="state"):
+        graph.belief_propagation([variable], evidence={variable: "missing"})

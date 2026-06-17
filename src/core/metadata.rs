@@ -1,16 +1,20 @@
 use super::properties::{validate_non_empty, validate_properties};
 use super::GraphCore;
-use crate::models::{EvidenceRecord, FactorRecord, PropertyMap, TraceRecord, VariableRecord};
+use crate::models::{
+    EvidenceRecord, FactorRecord, FactorTableRecord, PropertyMap, TraceRecord, VariableRecord,
+};
 
 impl GraphCore {
     pub(crate) fn add_variable(
         &mut self,
         owner_id: Option<u64>,
         domain: String,
+        states: Option<Vec<String>>,
         prior: PropertyMap,
         posterior: PropertyMap,
     ) -> Result<u64, String> {
         validate_non_empty("domain", &domain)?;
+        let states = states_for_domain(&domain, states)?;
         validate_properties(&prior)?;
         validate_properties(&posterior)?;
         if let Some(owner_id) = owner_id {
@@ -22,6 +26,7 @@ impl GraphCore {
             id,
             owner_id,
             domain,
+            states,
             prior,
             posterior,
         };
@@ -60,6 +65,61 @@ impl GraphCore {
         }
         self.insert_factor_record(record)?;
         Ok(id)
+    }
+
+    pub(crate) fn add_factor_table(
+        &mut self,
+        variables: Vec<u64>,
+        values: Vec<f64>,
+    ) -> Result<u64, String> {
+        validate_factor_table(self, &variables, &values, false)?;
+        let factor_id = self.add_factor(
+            variables.clone(),
+            Vec::new(),
+            "factor_table".to_string(),
+            PropertyMap::new(),
+        )?;
+        let record = FactorTableRecord {
+            factor_id,
+            variables,
+            values,
+            is_cpd: false,
+        };
+        if let Some(store) = &self.store {
+            store.insert_factor_table(&record)?;
+        }
+        self.insert_factor_table_record(record)?;
+        Ok(factor_id)
+    }
+
+    pub(crate) fn add_cpd(
+        &mut self,
+        variable_id: u64,
+        parent_variables: Vec<u64>,
+        values: Vec<f64>,
+    ) -> Result<u64, String> {
+        self.require_variable(variable_id)?;
+        let mut variables = Vec::with_capacity(parent_variables.len() + 1);
+        variables.push(variable_id);
+        variables.extend(parent_variables);
+        validate_factor_table(self, &variables, &values, true)?;
+        let factor_id = self.add_factor(
+            variables.iter().copied().skip(1).collect(),
+            vec![variable_id],
+            "cpd".to_string(),
+            PropertyMap::new(),
+        )?;
+        let record = FactorTableRecord {
+            factor_id,
+            variables,
+            values,
+            is_cpd: true,
+        };
+        if let Some(store) = &self.store {
+            store.insert_factor_table(&record)?;
+        }
+        self.insert_factor_table_record(record)?;
+        Ok(factor_id)
     }
 
     pub(crate) fn add_evidence(
@@ -115,6 +175,31 @@ impl GraphCore {
         self.insert_factor_record(record)
     }
 
+    pub(super) fn insert_loaded_factor_table(
+        &mut self,
+        record: FactorTableRecord,
+    ) -> Result<(), String> {
+        validate_factor_table(self, &record.variables, &record.values, record.is_cpd)?;
+        self.require_factor(record.factor_id)?;
+        self.insert_factor_table_record(record)
+    }
+
+    pub(super) fn insert_loaded_posterior(
+        &mut self,
+        variable_id: u64,
+        posterior: Vec<f64>,
+    ) -> Result<(), String> {
+        self.require_variable(variable_id)?;
+        if posterior.len() != self.variable_states(variable_id)?.len() {
+            return Err(format!(
+                "posterior for variable {variable_id} has invalid length"
+            ));
+        }
+        let _ = normalize(&posterior)?;
+        self.posteriors.insert(variable_id, posterior);
+        Ok(())
+    }
+
     pub(super) fn insert_loaded_evidence(&mut self, record: EvidenceRecord) -> Result<(), String> {
         self.require_variable(record.variable_id)?;
         self.insert_evidence_record(record)
@@ -143,6 +228,17 @@ impl GraphCore {
         }
         self.factors[id as usize] = Some(record);
         self.next_factor_id = self.next_factor_id.max(id + 1);
+        Ok(())
+    }
+
+    fn insert_factor_table_record(&mut self, record: FactorTableRecord) -> Result<(), String> {
+        if self.factor_tables.contains_key(&record.factor_id) {
+            return Err(format!(
+                "factor table for factor {} already exists",
+                record.factor_id
+            ));
+        }
+        self.factor_tables.insert(record.factor_id, record);
         Ok(())
     }
 
@@ -175,6 +271,21 @@ impl GraphCore {
         }
     }
 
+    pub(super) fn require_factor(&self, factor_id: u64) -> Result<(), String> {
+        match self.factors.get(factor_id as usize) {
+            Some(Some(_)) => Ok(()),
+            _ => Err(format!("factor {factor_id} not found")),
+        }
+    }
+
+    pub(super) fn variable_states(&self, variable_id: u64) -> Result<&[String], String> {
+        self.variables
+            .get(variable_id as usize)
+            .and_then(Option::as_ref)
+            .map(|variable| variable.states.as_slice())
+            .ok_or_else(|| format!("variable {variable_id} not found"))
+    }
+
     fn ensure_variable_slot(&mut self, variable_id: u64) {
         let size = variable_id as usize + 1;
         if self.variables.len() < size {
@@ -202,4 +313,84 @@ impl GraphCore {
             self.traces.resize_with(size, || None);
         }
     }
+}
+
+fn states_for_domain(domain: &str, states: Option<Vec<String>>) -> Result<Vec<String>, String> {
+    let states = match states {
+        Some(states) => states,
+        None if domain == "binary" => vec!["false".to_string(), "true".to_string()],
+        None => {
+            return Err(format!(
+                "states are required for non-binary variable domain {domain:?}"
+            ));
+        }
+    };
+    if states.is_empty() {
+        return Err("variable states cannot be empty".to_string());
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    for state in &states {
+        validate_non_empty("state", state)?;
+        if !seen.insert(state) {
+            return Err(format!("duplicate state {state:?}"));
+        }
+    }
+    Ok(states)
+}
+
+fn validate_factor_table(
+    graph: &GraphCore,
+    variables: &[u64],
+    values: &[f64],
+    is_cpd: bool,
+) -> Result<(), String> {
+    if variables.is_empty() {
+        return Err("factor table variables cannot be empty".to_string());
+    }
+    let mut expected = 1usize;
+    let mut seen_variables = std::collections::BTreeSet::new();
+    for &variable_id in variables {
+        graph.require_variable(variable_id)?;
+        if !seen_variables.insert(variable_id) {
+            return Err(format!("duplicate variable {variable_id} in factor table"));
+        }
+        expected = expected
+            .checked_mul(graph.variable_states(variable_id)?.len())
+            .ok_or_else(|| "factor table cardinality overflows".to_string())?;
+    }
+    if values.len() != expected {
+        return Err(format!(
+            "factor table has {} values but expected {expected}",
+            values.len()
+        ));
+    }
+    for value in values {
+        if !value.is_finite() || *value < 0.0 {
+            return Err("factor table values must be finite and non-negative".to_string());
+        }
+    }
+    if values.iter().all(|value| *value == 0.0) {
+        return Err("factor table cannot be all zero".to_string());
+    }
+    if is_cpd {
+        let child_cardinality = graph.variable_states(variables[0])?.len();
+        for chunk in values.chunks(child_cardinality) {
+            if chunk.iter().all(|value| *value == 0.0) {
+                return Err("CPD child distribution cannot be all zero".to_string());
+            }
+            let sum = chunk.iter().sum::<f64>();
+            if (sum - 1.0).abs() > 1e-9 {
+                return Err("CPD child distributions must sum to 1.0".to_string());
+            }
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn normalize(values: &[f64]) -> Result<Vec<f64>, String> {
+    let sum = values.iter().sum::<f64>();
+    if !sum.is_finite() || sum <= 0.0 {
+        return Err("distribution must have positive finite mass".to_string());
+    }
+    Ok(values.iter().map(|value| value / sum).collect())
 }

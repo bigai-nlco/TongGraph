@@ -5,7 +5,8 @@
 TongGraph is not ready for production use. v0.1 is implemented for the current
 in-memory Rust/Python API surface. v0.2 and v0.3 are implemented for local
 SQLite-backed storage, property cataloging, persisted compute segments, snapshot
-reads, and graph compute runtime APIs.
+reads, and graph compute runtime APIs. v0.4 is implemented for finite discrete
+active-subgraph belief propagation.
 
 Status markers:
 
@@ -60,16 +61,25 @@ SQLite databases.
 ### v0.4: Probabilistic propagation extension
 
 - [x] Variables
+- [x] Ordered binary and categorical variable states
 - [x] Priors
 - [x] Evidence
 - [x] Probability transfer over weighted sparse edges
-- [ ] (partial) Local propagation over active sparse subgraphs: weighted sparse
-  propagation exists; active-subgraph compilation is still pending.
-- [ ] CPDs
+- [x] Local propagation over active sparse subgraphs
+- [x] Factor tables
+- [x] CPDs
 - [x] Factors
-- [ ] Posterior queries
-- [ ] Belief propagation
+- [x] Active subgraph compilation
+- [x] Posterior queries
+- [x] Residual asynchronous belief propagation
 - [x] Inference traces
+
+v0.4 supports finite discrete variables and sum-product belief propagation over
+compiled active subgraphs. Runtime evidence overrides persisted evidence for a
+run, posterior persistence is opt-in, and traces expose convergence status
+because loopy BP can converge, oscillate, or stop at the configured iteration
+limit. Continuous/Gaussian BP, junction-tree exact inference, generalized BP,
+expectation propagation, and plugin-defined distributions are future work.
 
 ### v0.5: Query layer
 

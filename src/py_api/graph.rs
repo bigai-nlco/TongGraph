@@ -1,6 +1,9 @@
 use super::compute::{
     compute_jobs_from_py, compute_result_to_py, scores_to_py, shortest_path_to_py,
 };
+use super::inference::{
+    active_subgraph_to_py, belief_result_to_py, distribution_to_py, evidence_from_py,
+};
 use super::properties::{optional_property_value_from_py, properties_from_py};
 use super::records::{PyEdge, PyEvidence, PyFactor, PyNode, PyTrace, PyVariable};
 use super::snapshot::PyGraphSnapshot;
@@ -310,18 +313,20 @@ impl PyGraph {
             .map_err(to_py_value_error)
     }
 
-    #[pyo3(signature = (domain, owner_id=None, prior=None, posterior=None))]
+    #[pyo3(signature = (domain, owner_id=None, prior=None, posterior=None, states=None))]
     fn add_variable(
         &mut self,
         domain: String,
         owner_id: Option<u64>,
         prior: Option<&Bound<'_, PyDict>>,
         posterior: Option<&Bound<'_, PyDict>>,
+        states: Option<Vec<String>>,
     ) -> PyResult<u64> {
         self.core
             .add_variable(
                 owner_id,
                 domain,
+                states,
                 properties_from_py(prior)?,
                 properties_from_py(posterior)?,
             )
@@ -346,6 +351,23 @@ impl PyGraph {
             .map_err(to_py_value_error)
     }
 
+    fn add_factor_table(&mut self, variables: Vec<u64>, values: Vec<f64>) -> PyResult<u64> {
+        self.core
+            .add_factor_table(variables, values)
+            .map_err(to_py_value_error)
+    }
+
+    fn add_cpd(
+        &mut self,
+        variable_id: u64,
+        parent_variables: Vec<u64>,
+        values: Vec<f64>,
+    ) -> PyResult<u64> {
+        self.core
+            .add_cpd(variable_id, parent_variables, values)
+            .map_err(to_py_value_error)
+    }
+
     #[pyo3(signature = (variable_id, payload=None))]
     fn add_evidence(
         &mut self,
@@ -361,6 +383,83 @@ impl PyGraph {
     fn add_trace(&mut self, payload: Option<&Bound<'_, PyDict>>) -> PyResult<u64> {
         self.core
             .add_trace(properties_from_py(payload)?)
+            .map_err(to_py_value_error)
+    }
+
+    #[pyo3(signature = (query_variables, evidence=None, radius=2, max_nodes=10000, max_factors=50000))]
+    fn compile_active_subgraph(
+        &self,
+        py: Python<'_>,
+        query_variables: Vec<u64>,
+        evidence: Option<&Bound<'_, PyDict>>,
+        radius: usize,
+        max_nodes: usize,
+        max_factors: usize,
+    ) -> PyResult<Py<PyAny>> {
+        let evidence = evidence_from_py(evidence)?;
+        let active = self
+            .core
+            .compile_active_subgraph(&query_variables, &evidence, radius, max_nodes, max_factors)
+            .map_err(to_py_value_error)?;
+        active_subgraph_to_py(py, &active)
+    }
+
+    #[pyo3(signature = (query_variables=None, evidence=None, radius=2, max_iters=1000, tolerance=1e-6, damping=0.2, persist=false))]
+    fn belief_propagation(
+        &mut self,
+        py: Python<'_>,
+        query_variables: Option<Vec<u64>>,
+        evidence: Option<&Bound<'_, PyDict>>,
+        radius: usize,
+        max_iters: usize,
+        tolerance: f64,
+        damping: f64,
+        persist: bool,
+    ) -> PyResult<Py<PyAny>> {
+        let evidence = evidence_from_py(evidence)?;
+        let result = self
+            .core
+            .belief_propagation(
+                query_variables.as_deref(),
+                &evidence,
+                radius,
+                max_iters,
+                tolerance,
+                damping,
+                persist,
+            )
+            .map_err(to_py_value_error)?;
+        belief_result_to_py(py, result)
+    }
+
+    fn posterior(&self, py: Python<'_>, variable_id: u64) -> PyResult<Py<PyAny>> {
+        distribution_to_py(
+            py,
+            self.core
+                .posterior(variable_id)
+                .map_err(to_py_value_error)?,
+        )
+    }
+
+    #[pyo3(signature = (seeds, radius=2, query_nodes=None, edge_type=None, edge_property="probability", damping=1.0))]
+    fn local_propagate(
+        &self,
+        seeds: HashMap<u64, f64>,
+        radius: usize,
+        query_nodes: Option<Vec<u64>>,
+        edge_type: Option<String>,
+        edge_property: &str,
+        damping: f64,
+    ) -> PyResult<HashMap<u64, f64>> {
+        self.core
+            .local_propagate(
+                &seeds,
+                radius,
+                query_nodes.as_deref(),
+                edge_type.as_deref(),
+                edge_property,
+                damping,
+            )
             .map_err(to_py_value_error)
     }
 }

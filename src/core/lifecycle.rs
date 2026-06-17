@@ -9,6 +9,8 @@ impl GraphCore {
             edges: Vec::new(),
             variables: Vec::new(),
             factors: Vec::new(),
+            factor_tables: HashMap::new(),
+            posteriors: HashMap::new(),
             evidence: Vec::new(),
             traces: Vec::new(),
             base_segment: ComputeSegment::default(),
@@ -56,6 +58,12 @@ impl GraphCore {
         }
         for factor in store.load_factors()? {
             core.insert_loaded_factor(factor)?;
+        }
+        for factor_table in store.load_factor_tables()? {
+            core.insert_loaded_factor_table(factor_table)?;
+        }
+        for (variable_id, posterior) in store.load_posteriors()? {
+            core.insert_loaded_posterior(variable_id, posterior)?;
         }
         for evidence in store.load_evidence()? {
             core.insert_loaded_evidence(evidence)?;
@@ -123,6 +131,8 @@ impl GraphCore {
             edges: self.edges.clone(),
             variables: self.variables.clone(),
             factors: self.factors.clone(),
+            factor_tables: self.factor_tables.clone(),
+            posteriors: self.posteriors.clone(),
             evidence: self.evidence.clone(),
             traces: self.traces.clone(),
             base_segment: self.base_segment.clone(),

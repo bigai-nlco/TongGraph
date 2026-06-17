@@ -44,7 +44,7 @@ nav:
       - Core Concepts: core-concepts.md
       - Quickstart: quickstart.md
   - API:
-      - API Reference: api.md
+      - API: api/index.md
       - Graph: api/graph.md
       - GraphSnapshot: api/graph-snapshot.md
       - Node: api/node.md

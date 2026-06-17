@@ -6,8 +6,6 @@
 
 <p class="tg-kicker">Embedded sparse graph compute</p>
 
-# TongGraph
-
 TongGraph is a Python-facing embedded graph compute database backed by a Rust
 core. It stores property graphs locally, keeps traversal data in compute-native
 adjacency layouts, and adds optional finite-discrete probabilistic inference for
@@ -19,13 +17,11 @@ updates in-process rather than behind a separate graph database service.
 </p>
 
 [Quickstart](quickstart.md){ .md-button .md-button--primary }
-[Core Concepts](core-concepts.md){ .md-button }
-[API Reference](api.md){ .md-button }
+[API Reference](./api/index.md){ .md-button }
 
 <div class="tg-pill-row" markdown>
-<span class="tg-pill">Python API</span>
 <span class="tg-pill">Rust core</span>
-<span class="tg-pill">SQLite local storage</span>
+<span class="tg-pill">Python API</span>
 <span class="tg-pill">CSR/CSC adjacency</span>
 <span class="tg-pill">Belief propagation</span>
 </div>
@@ -116,7 +112,7 @@ TongGraph keeps three ideas separate:
 - Read [Core Concepts](core-concepts.md) for storage, architecture, data model,
   scope, and probabilistic model.
 - Use [Examples](examples.md) for expected behavior and live outputs.
-- Use [API](api.md) when you need method signatures.
+- Use [API](api/index.md) when you need method signatures.
 - Read [Algorithms](design/algorithms.md) and
   [Belief Propagation](design/belief-propagation.md) for the math behind the
   APIs.

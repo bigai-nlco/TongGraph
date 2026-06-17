@@ -19,6 +19,7 @@ updates in-process rather than behind a separate graph database service.
 </p>
 
 [Quickstart](quickstart.md){ .md-button .md-button--primary }
+[Core Concepts](core-concepts.md){ .md-button }
 [API Reference](api.md){ .md-button }
 
 <div class="tg-pill-row" markdown>
@@ -78,6 +79,25 @@ applications, research tools, and agent systems.
 
 </div>
 
+## Minimal Example
+
+```python
+from tonggraph import Graph
+
+graph = Graph()
+alice = graph.add_node(
+    "alice",
+    labels=["Person"],
+    properties={"name": "Alice", "active": True},
+)
+bob = graph.add_node("bob", labels=["Person"], properties={"name": "Bob"})
+
+graph.add_edge(alice, bob, "KNOWS", properties={"probability": 0.8})
+
+assert graph.neighbors(alice) == [bob]
+assert graph.propagate({alice: 1.0}, 1)[bob] == 0.8
+```
+
 ## Design Philosophy
 
 TongGraph keeps three ideas separate:
@@ -93,6 +113,8 @@ TongGraph keeps three ideas separate:
 ## Where To Go Next
 
 - Start with [Quickstart](quickstart.md) for installation and first graph.
+- Read [Core Concepts](core-concepts.md) for storage, architecture, data model,
+  scope, and probabilistic model.
 - Use [Examples](examples.md) for expected behavior and live outputs.
 - Use [API](api.md) when you need method signatures.
 - Read [Algorithms](design/algorithms.md) and

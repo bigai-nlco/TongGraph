@@ -5,6 +5,7 @@ use super::inference::{
     active_subgraph_to_py, belief_result_to_py, distribution_to_py, evidence_from_py,
 };
 use super::properties::{optional_property_value_from_py, properties_from_py};
+use super::query::{query_rows_to_py, query_schema_to_py, query_spec_from_py};
 use super::records::{PyEdge, PyEvidence, PyFactor, PyNode, PyTrace, PyVariable};
 use super::snapshot::PyGraphSnapshot;
 use super::to_py_value_error;
@@ -298,6 +299,16 @@ impl PyGraph {
             .into_iter()
             .map(|result| compute_result_to_py(py, result))
             .collect()
+    }
+
+    fn query(&self, py: Python<'_>, spec: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        let spec = query_spec_from_py(spec)?;
+        let rows = self.core.query(&spec).map_err(to_py_value_error)?;
+        query_rows_to_py(py, &rows)
+    }
+
+    fn query_schema(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        query_schema_to_py(py)
     }
 
     #[pyo3(signature = (seeds, steps, edge_property="probability", damping=1.0))]

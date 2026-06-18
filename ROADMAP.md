@@ -83,10 +83,16 @@ expectation propagation, and plugin-defined distributions are future work.
 
 ### v0.5: Query layer
 
-- [ ] Minimal graph query DSL
-- [ ] Pattern query planning
+- [x] Minimal graph query DSL
+- [x] Pattern query planning
 - [ ] Optional Cypher-like subset
 - [ ] Full-text and vector retrieval adapters
+
+v0.5 starts with a deterministic structured path-pattern DSL exposed through
+the Python SDK. Queries support node labels, edge types, exact property matches,
+simple property filters, directed path expansion, return projection, row limits,
+and a provider-neutral natural-language compiler hook. Cypher-like parsing,
+full-text retrieval, and vector retrieval remain future work.
 
 ## Design Principles
 

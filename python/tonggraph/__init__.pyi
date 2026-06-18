@@ -1,12 +1,27 @@
 from __future__ import annotations
 
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 __version__: str
 
 PropertyValue = bool | int | float | str
 Properties = Mapping[str, PropertyValue]
 Distribution = dict[str, float]
+QueryCompiler = Callable[[str, Mapping[str, Any]], Mapping[str, Any]]
+
+def query_dsl_schema() -> dict[str, Any]:
+    """Return the structured query DSL schema."""
+    ...
+
+def query_nl(
+    graph: GraphSnapshot,
+    question: str,
+    compiler: QueryCompiler,
+    *,
+    schema: Mapping[str, Any] | None = None,
+) -> list[dict[str, int]]:
+    """Compile a natural-language question into the query DSL and execute it."""
+    ...
 
 class Node:
     """Immutable node record returned by graph lookup methods.
@@ -319,6 +334,14 @@ class GraphSnapshot:
 
     def compute_batch(self, jobs: Sequence[Mapping[str, Any]]) -> list[Any]:
         """Run multiple compute jobs and return results in input order."""
+        ...
+
+    def query(self, spec: Mapping[str, Any]) -> list[dict[str, int]]:
+        """Run a structured path-pattern query and return alias-to-ID row bindings."""
+        ...
+
+    def query_schema(self) -> dict[str, Any]:
+        """Return the structured query DSL schema."""
         ...
 
 class Graph(GraphSnapshot):

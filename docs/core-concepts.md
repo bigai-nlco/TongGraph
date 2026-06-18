@@ -64,6 +64,7 @@ TongGraph is intended to provide:
 - labels, edge types, and scalar properties
 - external IDs mapped to internal integer IDs
 - adjacency lookup, neighborhood traversal, and local retrieval
+- structured path-pattern queries
 - label, edge-type, and property indexes
 - snapshot reads and append-friendly writes
 - common graph algorithms
@@ -72,7 +73,7 @@ TongGraph is intended to provide:
 - Python bindings over a Rust core
 
 TongGraph is not trying to be a drop-in Neo4j replacement, a distributed graph
-database, a Cypher-compatible query engine, a general-purpose relational
+database, a full Cypher-compatible query engine, a general-purpose relational
 database, or a full probabilistic programming language.
 
 ## Architecture
@@ -96,6 +97,11 @@ TongGraph
     - BFS, shortest path, connected components
     - PageRank, random walk, subgraph extraction
     - batch compute jobs
+
+  Query Layer
+    - structured node-edge-node path patterns
+    - labels, edge types, and property filters
+    - return projection and row limits
 
   Probabilistic Extension
     - variables, ordered states, priors, posteriors
@@ -134,6 +140,32 @@ External IDs are application-facing strings. The compute engine uses internal
 Properties are scalar metadata. They can be used by graph algorithms, for
 example as edge weights, but they do not automatically create probabilistic
 semantics.
+
+## Query Model
+
+The v0.5 query layer matches one connected path pattern over the property graph.
+A query is a structured dictionary rather than a string language:
+
+```python
+{
+    "match": [
+        {"node": "a", "labels": ["Person"]},
+        {"edge": "rel", "type": "KNOWS", "direction": "out"},
+        {"node": "b", "properties": {"active": True}},
+    ],
+    "return": ["a", "rel", "b"],
+}
+```
+
+The result is a list of row dictionaries that bind aliases to internal node or
+edge IDs. The same query can run against a mutable `Graph` or a read-only
+`GraphSnapshot`.
+
+Natural-language query support is intentionally provider-neutral. Applications
+can pass a compiler callable that converts a question into the structured DSL;
+TongGraph validates and executes the resulting local query.
+
+See [Query Layer](design/query-layer.md) for the full DSL.
 
 ## Probabilistic Model
 

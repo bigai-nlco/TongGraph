@@ -97,6 +97,60 @@ hood, but Python users work with the `tonggraph` package.
     directory when compacted. Both are local data artifacts and should not be
     committed.
 
+## Query A Pattern
+
+Structured queries match one connected path pattern and return alias-to-ID row
+bindings.
+
+=== "Python"
+
+    ```python
+    from tonggraph import Graph
+
+    graph = Graph()
+    alice = graph.add_node(
+        "alice",
+        labels=["Person"],
+        properties={"name": "Alice", "rank": 3, "active": True},
+    )
+    bob = graph.add_node(
+        "bob",
+        labels=["Person"],
+        properties={"name": "Bob", "rank": 2, "active": True},
+    )
+    graph.add_edge(alice, bob, "KNOWS", properties={"note": "team alpha"})
+
+    rows = graph.query(
+        {
+            "match": [
+                {
+                    "node": "a",
+                    "labels": ["Person"],
+                    "where": [{"property": "rank", "op": "gte", "value": 2}],
+                },
+                {
+                    "edge": "rel",
+                    "type": "KNOWS",
+                    "where": [{"property": "note", "op": "contains", "value": "team"}],
+                },
+                {"node": "b", "properties": {"active": True}},
+            ],
+            "return": ["a", "rel", "b"],
+        }
+    )
+
+    print(rows)
+    ```
+
+    Expected output:
+
+    ```text
+    [{'a': 0, 'b': 1, 'rel': 0}]
+    ```
+
+See [Query Layer](design/query-layer.md) for the DSL reference and the
+provider-neutral natural-language compiler hook.
+
 ## Run Tests
 
 === "Python"

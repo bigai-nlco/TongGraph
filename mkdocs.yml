@@ -56,6 +56,7 @@ nav:
   - Design:
       - Architecture: design/architecture.md
       - Algorithms: design/algorithms.md
+      - Query Layer: design/query-layer.md
       - Belief Propagation: design/belief-propagation.md
       - Persistence: design/persistence.md
   - Examples: examples.md

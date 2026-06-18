@@ -5,9 +5,10 @@ The reference pages in this section are generated from the Python API stubs in
 PyO3 extension.
 
 Use these pages for signatures, argument shapes, and return values. For
-algorithmic behavior, start with [Algorithms](../design/algorithms.md) and
-[Belief Propagation](../design/belief-propagation.md). For storage behavior, see
-[Persistence](../design/persistence.md).
+algorithmic behavior, start with [Algorithms](../design/algorithms.md). For
+pattern query behavior, see [Query Layer](../design/query-layer.md). For
+probabilistic inference, see [Belief Propagation](../design/belief-propagation.md).
+For storage behavior, see [Persistence](../design/persistence.md).
 
 ## Core Classes
 

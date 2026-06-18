@@ -42,22 +42,21 @@ database server.
 
 ## Highlighted Features
 
-- **Local storage strategy:** SQLite is the local source of truth for records,
-  properties, operation logs, variables, factors, evidence, traces, and segment
-  manifests. The Rust core keeps traversal and inference on compute-native
-  adjacency and message-passing structures.
-- **Scope:** TongGraph focuses on embedded property graph storage, local graph
-  retrieval, common graph algorithms, sparse score propagation, and
-  finite-discrete belief propagation. It is not a distributed graph database or
-  a drop-in Cypher/Neo4j replacement.
-- **Architecture:** Python users call a PyO3 API backed by a Rust core. The
-  core separates durable records, compacted adjacency segments, mutable write
-  overlays, graph algorithms, and probabilistic inference state.
-- **Data model:** Nodes and directed typed edges have internal `u64` IDs,
-  optional external IDs, labels, edge types, and scalar property maps.
-- **Probabilistic model:** Probability is explicit and optional. Variables,
-  ordered states, factor tables, CPDs, evidence, posteriors, and traces live in
-  a separate model layer from graph properties.
+- **Property graph model:** Add nodes and directed typed edges with scalar
+  properties, labels, and external IDs.
+- **Compute-first layout:** Traversal reads from compacted outgoing and
+  incoming adjacency segments with a mutable delta overlay for recent writes.
+- **Local persistence:** SQLite stores metadata, properties, operation logs,
+  variables, factors, evidence, traces, and segment manifests.
+- **Graph algorithms:** Use Python methods for BFS, weighted shortest path,
+  connected components, PageRank, random walks, subgraphs, and batch compute
+  jobs.
+- **Structured query layer:** Match connected path patterns with labels, edge
+  types, property filters, return projection, and row limits.
+- **Sparse probability transfer:** Propagate weighted scores over graph
+  neighborhoods with damping and radius-limited active neighborhoods.
+- **Finite belief propagation:** Build binary or categorical variables, CPDs,
+  factor tables, evidence, and residual asynchronous sum-product inference.
 
 Read [Core Concepts](docs/core-concepts.md) for the full storage, scope,
 architecture, data model, and probabilistic model notes.
@@ -104,6 +103,26 @@ graph.pagerank(iterations=20, tolerance=1e-9)
 graph.random_walk(alice, 10, seed=7)
 graph.subgraph([alice, bob])
 ```
+
+Structured path-pattern queries return alias-to-ID row bindings:
+
+```python
+rows = graph.query(
+    {
+        "match": [
+            {"node": "a", "labels": ["Person"]},
+            {"edge": "rel", "type": "KNOWS", "direction": "out"},
+            {"node": "b", "properties": {"active": True}},
+        ],
+        "return": ["a", "rel", "b"],
+        "limit": 10,
+    }
+)
+```
+
+Natural-language query compilation is provider-neutral: pass a callable that
+turns `(question, schema)` into the structured DSL, then TongGraph executes the
+result locally.
 
 Discrete factor tables and CPDs can be queried with active-subgraph belief
 propagation:

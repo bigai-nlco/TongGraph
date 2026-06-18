@@ -36,7 +36,7 @@ pub(super) fn optional_property_value_from_py(
     value.map(property_value_from_py).transpose()
 }
 
-fn property_value_from_py(value: &Bound<'_, PyAny>) -> PyResult<PropertyValue> {
+pub(super) fn property_value_from_py(value: &Bound<'_, PyAny>) -> PyResult<PropertyValue> {
     if value.is_instance_of::<PyBool>() {
         return Ok(PropertyValue::Bool(value.extract()?));
     }

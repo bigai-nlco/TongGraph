@@ -2,6 +2,7 @@ mod compute;
 mod graph;
 mod inference;
 mod properties;
+mod query;
 mod records;
 mod snapshot;
 
@@ -13,6 +14,7 @@ pub(crate) use snapshot::PyGraphSnapshot;
 
 pub(crate) fn register_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
+    m.add_function(wrap_pyfunction!(query::py_query_dsl_schema, m)?)?;
     m.add_class::<PyGraph>()?;
     m.add_class::<PyGraphSnapshot>()?;
     m.add_class::<records::PyNode>()?;

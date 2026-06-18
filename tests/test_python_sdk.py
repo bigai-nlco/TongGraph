@@ -5,7 +5,7 @@ from sqlite3 import connect
 
 import pytest
 
-from tonggraph import Graph
+from tonggraph import Graph, query_dsl_schema, query_nl
 
 
 def test_in_memory_graph_retrieval_and_indexes() -> None:
@@ -130,6 +130,120 @@ def test_sqlite_backed_graph_reopens_with_indexes(tmp_path: Path) -> None:
     assert reopened.get_factor(factor).parameters == {"weight": 2}
     assert reopened.get_evidence(evidence).payload == {"observed": True}
     assert reopened.get_trace(trace).payload == {"step": 1, "note": "initial"}
+
+
+def test_query_layer_structured_queries_snapshots_reopen_and_nl(tmp_path: Path) -> None:
+    db_path = tmp_path / "query.db"
+    graph = Graph(str(db_path))
+    alice = graph.add_node(
+        "alice",
+        labels=["Person"],
+        properties={"name": "Alice", "rank": 3, "active": True, "group": "ai"},
+    )
+    bob = graph.add_node(
+        "bob",
+        labels=["Person"],
+        properties={"name": "Bob", "rank": 2, "active": True, "group": "research"},
+    )
+    carol = graph.add_node(
+        "carol",
+        labels=["Person"],
+        properties={"name": "Carol", "rank": 4, "active": False, "group": "research"},
+    )
+    alice_knows_bob = graph.add_edge(
+        alice,
+        bob,
+        "KNOWS",
+        properties={"note": "team alpha", "weight": 0.8},
+    )
+    graph.add_edge(
+        bob,
+        carol,
+        "KNOWS",
+        properties={"note": "team beta", "weight": 0.6},
+    )
+    graph.add_edge(carol, alice, "KNOWS", properties={"note": "loop"})
+
+    spec = {
+        "match": [
+            {
+                "node": "a",
+                "labels": ["Person"],
+                "where": [
+                    {"property": "rank", "op": "gte", "value": 2},
+                    {
+                        "property": "group",
+                        "op": "in",
+                        "value": ["ai", "research"],
+                    },
+                ],
+            },
+            {
+                "edge": "rel",
+                "type": "KNOWS",
+                "direction": "out",
+                "where": [{"property": "note", "op": "contains", "value": "team"}],
+            },
+            {"node": "b", "labels": ["Person"], "properties": {"active": True}},
+        ],
+        "return": ["a", "rel", "b"],
+        "limit": 10,
+    }
+    expected = [{"a": alice, "rel": alice_knows_bob, "b": bob}]
+
+    assert graph.query(spec) == expected
+    assert graph.snapshot().query(spec) == expected
+    assert graph.query_schema()["name"] == "tonggraph_query_dsl_v0"
+    assert query_dsl_schema()["operators"] == [
+        "eq",
+        "ne",
+        "lt",
+        "lte",
+        "gt",
+        "gte",
+        "in",
+        "contains",
+    ]
+
+    def compiler(question: str, schema: dict[str, object]) -> dict[str, object]:
+        assert question == "Who does Alice know on the team?"
+        assert schema["name"] == "tonggraph_query_dsl_v0"
+        return spec
+
+    assert query_nl(graph, "Who does Alice know on the team?", compiler) == expected
+    with pytest.raises(TypeError, match="mapping"):
+        query_nl(graph, "bad compiler", lambda _question, _schema: [])  # type: ignore[return-value]
+
+    del graph
+    reopened = Graph(str(db_path))
+    assert reopened.query(spec) == expected
+
+
+def test_query_layer_rejects_wrong_pattern_shapes() -> None:
+    graph = Graph()
+    a = graph.add_node("a")
+    b = graph.add_node("b")
+    graph.add_edge(a, b, "KNOWS")
+
+    with pytest.raises(ValueError, match="must be an edge pattern"):
+        graph.query(
+            {
+                "match": [
+                    {"node": "a"},
+                    {"node": "b"},
+                    {"node": "c"},
+                ],
+            }
+        )
+
+    with pytest.raises(ValueError, match="must be a node pattern"):
+        graph.query(
+            {
+                "match": [
+                    {"edge": "bad"},
+                ],
+            }
+        )
 
 
 def test_graph_compute_runtime_algorithms_and_batch() -> None:

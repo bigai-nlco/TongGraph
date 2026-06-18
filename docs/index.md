@@ -23,6 +23,7 @@ updates in-process rather than behind a separate graph database service.
 <span class="tg-pill">Rust core</span>
 <span class="tg-pill">Python API</span>
 <span class="tg-pill">CSR/CSC adjacency</span>
+<span class="tg-pill">Structured queries</span>
 <span class="tg-pill">Belief propagation</span>
 </div>
 
@@ -63,6 +64,11 @@ applications, research tools, and agent systems.
     Use Python methods for BFS, weighted shortest path, connected components,
     PageRank, random walks, subgraphs, and batch compute jobs.
 
+- :material-filter-variant: **Structured query layer**
+
+    Match connected path patterns with labels, edge types, property filters,
+    return projection, and row limits.
+
 - :material-transit-connection-variant: **Sparse probability transfer**
 
     Propagate weighted scores over graph neighborhoods with damping and
@@ -91,6 +97,16 @@ bob = graph.add_node("bob", labels=["Person"], properties={"name": "Bob"})
 graph.add_edge(alice, bob, "KNOWS", properties={"probability": 0.8})
 
 assert graph.neighbors(alice) == [bob]
+assert graph.query(
+    {
+        "match": [
+            {"node": "a", "external_id": "alice"},
+            {"edge": "rel", "type": "KNOWS"},
+            {"node": "b", "labels": ["Person"]},
+        ],
+        "return": ["a", "b"],
+    }
+) == [{"a": alice, "b": bob}]
 assert graph.propagate({alice: 1.0}, 1)[bob] == 0.8
 ```
 
@@ -113,6 +129,7 @@ TongGraph keeps three ideas separate:
   scope, and probabilistic model.
 - Use [Examples](examples.md) for expected behavior and live outputs.
 - Use [API](api/index.md) when you need method signatures.
-- Read [Algorithms](design/algorithms.md) and
-  [Belief Propagation](design/belief-propagation.md) for the math behind the
-  APIs.
+- Read [Algorithms](design/algorithms.md),
+  [Query Layer](design/query-layer.md), and
+  [Belief Propagation](design/belief-propagation.md) for design details behind
+  the APIs.

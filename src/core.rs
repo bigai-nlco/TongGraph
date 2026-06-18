@@ -15,6 +15,10 @@ mod tests;
 
 pub(crate) use algorithms::{ComputeJob, ComputeResult, ShortestPath};
 pub(crate) use inference::{ActiveSubgraph, BeliefPropagationResult};
+pub(crate) use queries::{
+    EdgePattern, NodePattern, PropertyConstraint, PropertyOperator, QueryDirection, QueryElement,
+    QueryRow, QuerySpec, QueryValue,
+};
 
 use crate::models::{
     EdgeRecord, EvidenceRecord, FactorRecord, FactorTableRecord, NodeRecord, TraceRecord,

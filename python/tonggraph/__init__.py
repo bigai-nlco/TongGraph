@@ -18,6 +18,8 @@ except ImportError as exc:  # pragma: no cover - exercised only before building.
         "`python scripts/build_python_extension.py` from the repository root."
     ) from exc
 
+from .query import query_dsl_schema, query_nl
+
 __all__ = [
     "Edge",
     "Evidence",
@@ -28,4 +30,6 @@ __all__ = [
     "Trace",
     "Variable",
     "__version__",
+    "query_dsl_schema",
+    "query_nl",
 ]

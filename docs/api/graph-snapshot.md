@@ -15,6 +15,7 @@ handle.
 | `pagerank` | [PageRank](../design/algorithms.md#pagerank) |
 | `random_walk` | [Random walk](../design/algorithms.md#random-walk) |
 | `subgraph`, `compute_batch` | [Batch compute and snapshots](../design/algorithms.md#batch-compute) |
+| `query`, `query_schema` | [Structured path-pattern query DSL](../design/query-layer.md) |
 
 ## Reference
 

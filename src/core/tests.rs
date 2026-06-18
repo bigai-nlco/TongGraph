@@ -184,6 +184,275 @@ fn compute_batch_returns_ordered_results() {
 }
 
 #[test]
+fn structured_query_matches_path_patterns_and_filters() {
+    let mut graph = GraphCore::new();
+    let alice = graph
+        .add_node(
+            Some("alice".to_string()),
+            vec!["Person".to_string()],
+            typed_map([
+                ("name", s("Alice")),
+                ("rank", PropertyValue::Int(3)),
+                ("active", PropertyValue::Bool(true)),
+                ("group", s("ai")),
+            ]),
+        )
+        .unwrap();
+    let bob = graph
+        .add_node(
+            Some("bob".to_string()),
+            vec!["Person".to_string()],
+            typed_map([
+                ("name", s("Bob")),
+                ("rank", PropertyValue::Int(2)),
+                ("active", PropertyValue::Bool(true)),
+                ("group", s("research")),
+            ]),
+        )
+        .unwrap();
+    let carol = graph
+        .add_node(
+            Some("carol".to_string()),
+            vec!["Person".to_string()],
+            typed_map([
+                ("name", s("Carol")),
+                ("rank", PropertyValue::Int(4)),
+                ("active", PropertyValue::Bool(false)),
+                ("group", s("research")),
+            ]),
+        )
+        .unwrap();
+    let claim = graph
+        .add_node(
+            Some("claim".to_string()),
+            vec!["Claim".to_string()],
+            map([]),
+        )
+        .unwrap();
+
+    let alice_knows_bob = graph
+        .add_edge(
+            alice,
+            bob,
+            "KNOWS".to_string(),
+            typed_map([
+                ("note", s("team alpha")),
+                ("weight", PropertyValue::Float(0.8)),
+            ]),
+        )
+        .unwrap();
+    graph
+        .add_edge(
+            bob,
+            carol,
+            "KNOWS".to_string(),
+            typed_map([
+                ("note", s("team beta")),
+                ("weight", PropertyValue::Float(0.6)),
+            ]),
+        )
+        .unwrap();
+    graph
+        .add_edge(
+            carol,
+            alice,
+            "KNOWS".to_string(),
+            typed_map([("note", s("loop")), ("weight", PropertyValue::Float(0.3))]),
+        )
+        .unwrap();
+    graph
+        .add_edge(bob, claim, "SUPPORTS".to_string(), map([]))
+        .unwrap();
+
+    let rows = graph
+        .query(&QuerySpec {
+            elements: vec![
+                QueryElement::Node(NodePattern {
+                    alias: "a".to_string(),
+                    id: None,
+                    external_id: None,
+                    labels: vec!["Person".to_string()],
+                    properties: vec![
+                        filter(
+                            "rank",
+                            PropertyOperator::Gte,
+                            QueryValue::Scalar(PropertyValue::Int(2)),
+                        ),
+                        filter(
+                            "group",
+                            PropertyOperator::In,
+                            QueryValue::List(vec![s("ai"), s("research")]),
+                        ),
+                    ],
+                }),
+                edge(
+                    "rel",
+                    Some("KNOWS"),
+                    QueryDirection::Out,
+                    vec![filter(
+                        "note",
+                        PropertyOperator::Contains,
+                        QueryValue::Scalar(s("team")),
+                    )],
+                ),
+                QueryElement::Node(NodePattern {
+                    alias: "b".to_string(),
+                    id: None,
+                    external_id: None,
+                    labels: vec!["Person".to_string()],
+                    properties: vec![filter(
+                        "active",
+                        PropertyOperator::Eq,
+                        QueryValue::Scalar(PropertyValue::Bool(true)),
+                    )],
+                }),
+            ],
+            returns: Some(vec!["a".to_string(), "rel".to_string(), "b".to_string()]),
+            limit: Some(1),
+        })
+        .unwrap();
+
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].get("a"), Some(&alice));
+    assert_eq!(rows[0].get("rel"), Some(&alice_knows_bob));
+    assert_eq!(rows[0].get("b"), Some(&bob));
+}
+
+#[test]
+fn structured_query_supports_directions_and_repeated_aliases() {
+    let mut graph = GraphCore::new();
+    let alice = graph
+        .add_node(
+            Some("alice".to_string()),
+            vec!["Person".to_string()],
+            map([]),
+        )
+        .unwrap();
+    let bob = graph
+        .add_node(Some("bob".to_string()), vec!["Person".to_string()], map([]))
+        .unwrap();
+    let carol = graph
+        .add_node(
+            Some("carol".to_string()),
+            vec!["Person".to_string()],
+            map([]),
+        )
+        .unwrap();
+    let ab = graph
+        .add_edge(alice, bob, "KNOWS".to_string(), map([]))
+        .unwrap();
+    let bc = graph
+        .add_edge(bob, carol, "KNOWS".to_string(), map([]))
+        .unwrap();
+    let ca = graph
+        .add_edge(carol, alice, "KNOWS".to_string(), map([]))
+        .unwrap();
+
+    let incoming = graph
+        .query(&QuerySpec {
+            elements: vec![
+                node_with_id("target", alice),
+                edge("rel", Some("KNOWS"), QueryDirection::In, vec![]),
+                node("source"),
+            ],
+            returns: Some(vec!["source".to_string(), "rel".to_string()]),
+            limit: None,
+        })
+        .unwrap();
+    assert_eq!(incoming.len(), 1);
+    assert_eq!(incoming[0].get("source"), Some(&carol));
+    assert_eq!(incoming[0].get("rel"), Some(&ca));
+
+    let both = graph
+        .query(&QuerySpec {
+            elements: vec![
+                node_with_id("center", bob),
+                edge("rel", Some("KNOWS"), QueryDirection::Both, vec![]),
+                node("other"),
+            ],
+            returns: Some(vec!["other".to_string(), "rel".to_string()]),
+            limit: None,
+        })
+        .unwrap();
+    assert_eq!(both.len(), 2);
+    assert_eq!(both[0].get("other"), Some(&carol));
+    assert_eq!(both[0].get("rel"), Some(&bc));
+    assert_eq!(both[1].get("other"), Some(&alice));
+    assert_eq!(both[1].get("rel"), Some(&ab));
+
+    let cycle = graph
+        .query(&QuerySpec {
+            elements: vec![
+                node_with_id("a", alice),
+                edge("ab", Some("KNOWS"), QueryDirection::Out, vec![]),
+                node("b"),
+                edge("bc", Some("KNOWS"), QueryDirection::Out, vec![]),
+                node("c"),
+                edge("ca", Some("KNOWS"), QueryDirection::Out, vec![]),
+                node("a"),
+            ],
+            returns: Some(vec!["a".to_string(), "b".to_string(), "c".to_string()]),
+            limit: None,
+        })
+        .unwrap();
+    assert_eq!(cycle.len(), 1);
+    assert_eq!(cycle[0].get("a"), Some(&alice));
+    assert_eq!(cycle[0].get("b"), Some(&bob));
+    assert_eq!(cycle[0].get("c"), Some(&carol));
+
+    let repeated_edge = graph
+        .query(&QuerySpec {
+            elements: vec![
+                node_with_id("a", alice),
+                edge("e", Some("KNOWS"), QueryDirection::Out, vec![]),
+                node_with_id("b", bob),
+                edge("e", Some("KNOWS"), QueryDirection::In, vec![]),
+                node_with_id("a", alice),
+            ],
+            returns: Some(vec!["e".to_string()]),
+            limit: None,
+        })
+        .unwrap();
+    assert_eq!(repeated_edge.len(), 1);
+    assert_eq!(repeated_edge[0].get("e"), Some(&ab));
+}
+
+#[test]
+fn structured_query_rejects_invalid_specs() {
+    let mut graph = GraphCore::new();
+    let node_id = graph.add_node(None, Vec::new(), map([])).unwrap();
+
+    let unknown_return = graph.query(&QuerySpec {
+        elements: vec![node_with_id("n", node_id)],
+        returns: Some(vec!["missing".to_string()]),
+        limit: None,
+    });
+    assert!(unknown_return
+        .unwrap_err()
+        .contains("return alias \"missing\" is not declared"));
+
+    let invalid_pattern = graph.query(&QuerySpec {
+        elements: vec![node("a"), node("b")],
+        returns: None,
+        limit: None,
+    });
+    assert!(invalid_pattern.unwrap_err().contains("alternate"));
+
+    let alias_kind_conflict = graph.query(&QuerySpec {
+        elements: vec![
+            node("same"),
+            edge("same", Some("LINK"), QueryDirection::Out, vec![]),
+            node("other"),
+        ],
+        returns: None,
+        limit: None,
+    });
+    assert!(alias_kind_conflict
+        .unwrap_err()
+        .contains("cannot refer to both nodes and edges"));
+}
+
+#[test]
 fn sqlite_segments_persist_after_manual_compaction_and_reopen() {
     let path = temp_db_path("tonggraph-segment");
     {
@@ -485,6 +754,60 @@ fn map<const N: usize>(values: [(&str, &str); N]) -> PropertyMap {
         .into_iter()
         .map(|(key, value)| (key.to_string(), PropertyValue::String(value.to_string())))
         .collect()
+}
+
+fn typed_map<const N: usize>(values: [(&str, PropertyValue); N]) -> PropertyMap {
+    values
+        .into_iter()
+        .map(|(key, value)| (key.to_string(), value))
+        .collect()
+}
+
+fn s(value: &str) -> PropertyValue {
+    PropertyValue::String(value.to_string())
+}
+
+fn node(alias: &str) -> QueryElement {
+    QueryElement::Node(NodePattern {
+        alias: alias.to_string(),
+        id: None,
+        external_id: None,
+        labels: Vec::new(),
+        properties: Vec::new(),
+    })
+}
+
+fn node_with_id(alias: &str, id: u64) -> QueryElement {
+    QueryElement::Node(NodePattern {
+        alias: alias.to_string(),
+        id: Some(id),
+        external_id: None,
+        labels: Vec::new(),
+        properties: Vec::new(),
+    })
+}
+
+fn edge(
+    alias: &str,
+    edge_type: Option<&str>,
+    direction: QueryDirection,
+    properties: Vec<PropertyConstraint>,
+) -> QueryElement {
+    QueryElement::Edge(EdgePattern {
+        alias: Some(alias.to_string()),
+        id: None,
+        edge_type: edge_type.map(str::to_string),
+        direction,
+        properties,
+    })
+}
+
+fn filter(key: &str, op: PropertyOperator, value: QueryValue) -> PropertyConstraint {
+    PropertyConstraint {
+        key: key.to_string(),
+        op,
+        value,
+    }
 }
 
 fn assert_close(actual: f64, expected: f64) {

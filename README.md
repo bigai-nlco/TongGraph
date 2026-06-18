@@ -53,6 +53,9 @@ database server.
   jobs.
 - **Structured query layer:** Match connected path patterns with labels, edge
   types, property filters, return projection, and row limits.
+- **Cypher compatibility subset:** Run embedded `Graph.cypher()` queries for
+  supported `MATCH`, `CREATE`, `MERGE`, `RETURN`, parameters, result records,
+  and staged local transactions.
 - **Sparse probability transfer:** Propagate weighted scores over graph
   neighborhoods with damping and radius-limited active neighborhoods.
 - **Finite belief propagation:** Build binary or categorical variables, CPDs,
@@ -68,6 +71,34 @@ See [ROADMAP.md](ROADMAP.md) for the current development plan.
 ## Getting Started
 
 TongGraph exposes its Rust core to Python through PyO3.
+
+### Install
+
+During pre-alpha development, use the source tree. Clone the repository, sync
+the local environment, and build the PyO3 extension in place:
+
+```bash
+git clone https://github.com/bigai-nlco/TongGraph.git
+cd TongGraph
+uv sync --dev
+uv run python scripts/build_python_extension.py
+```
+
+Package-index installation is intentionally not the primary pre-alpha path. The
+source-tree workflow keeps the Python package and compiled Rust extension
+aligned with the checked-out source.
+
+Verify the package:
+
+```bash
+uv run python -c "from tonggraph import Graph; print(Graph().node_count())"
+```
+
+Expected output:
+
+```text
+0
+```
 
 ```python
 from tonggraph import Graph

@@ -24,6 +24,7 @@ updates in-process rather than behind a separate graph database service.
 <span class="tg-pill">Python API</span>
 <span class="tg-pill">CSR/CSC adjacency</span>
 <span class="tg-pill">Structured queries</span>
+<span class="tg-pill">Cypher subset</span>
 <span class="tg-pill">Belief propagation</span>
 </div>
 
@@ -68,6 +69,11 @@ applications, research tools, and agent systems.
 
     Match connected path patterns with labels, edge types, property filters,
     return projection, and row limits.
+
+- :material-code-braces: **Cypher compatibility subset**
+
+    Run embedded `Graph.cypher()` queries for supported `MATCH`, `CREATE`,
+    `MERGE`, `RETURN`, parameters, result records, and staged local transactions.
 
 - :material-transit-connection-variant: **Sparse probability transfer**
 
@@ -130,6 +136,7 @@ TongGraph keeps three ideas separate:
 - Use [Examples](examples/index.md) for expected behavior and live outputs.
 - Use [API](api/index.md) when you need method signatures.
 - Read [Algorithms](design/algorithms.md),
-  [Query Layer](design/query-layer.md), and
+  [Query Layer](design/query-layer.md),
+  [Cypher Compatibility](design/cypher-compatibility.md), and
   [Belief Propagation](design/belief-propagation.md) for design details behind
   the APIs.

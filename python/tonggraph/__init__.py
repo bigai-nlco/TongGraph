@@ -2,11 +2,13 @@
 
 try:
     from ._tonggraph import (
+        CypherResult,
         Edge,
         Evidence,
         Factor,
         Graph,
         GraphSnapshot,
+        GraphTransaction,
         Node,
         Trace,
         Variable,
@@ -26,6 +28,8 @@ __all__ = [
     "Factor",
     "Graph",
     "GraphSnapshot",
+    "GraphTransaction",
+    "CypherResult",
     "Node",
     "Trace",
     "Variable",

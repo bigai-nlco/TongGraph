@@ -1,4 +1,5 @@
 mod compute;
+mod cypher;
 mod graph;
 mod inference;
 mod properties;
@@ -17,6 +18,8 @@ pub(crate) fn register_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(query::py_query_dsl_schema, m)?)?;
     m.add_class::<PyGraph>()?;
     m.add_class::<PyGraphSnapshot>()?;
+    m.add_class::<cypher::PyCypherResult>()?;
+    m.add_class::<cypher::PyGraphTransaction>()?;
     m.add_class::<records::PyNode>()?;
     m.add_class::<records::PyEdge>()?;
     m.add_class::<records::PyVariable>()?;

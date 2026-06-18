@@ -1,6 +1,7 @@
 use super::compute::{
     compute_jobs_from_py, compute_result_to_py, scores_to_py, shortest_path_to_py,
 };
+use super::cypher::{params_from_py, PyCypherResult, PyGraphTransaction};
 use super::inference::{
     active_subgraph_to_py, belief_result_to_py, distribution_to_py, evidence_from_py,
 };
@@ -10,15 +11,18 @@ use super::records::{PyEdge, PyEvidence, PyFactor, PyNode, PyTrace, PyVariable};
 use super::snapshot::PyGraphSnapshot;
 use super::to_py_value_error;
 use crate::core::GraphCore;
+use crate::cypher;
 use crate::models::{NewEdgeRecord, NewNodeRecord};
 use pyo3::exceptions::{PyKeyError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyList};
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 #[pyclass(name = "Graph", unsendable)]
 pub(crate) struct PyGraph {
-    core: GraphCore,
+    pub(super) core: Rc<RefCell<GraphCore>>,
 }
 
 #[pymethods]
@@ -30,7 +34,9 @@ impl PyGraph {
             Some(path) => GraphCore::open(&path).map_err(PyRuntimeError::new_err)?,
             None => GraphCore::new(),
         };
-        Ok(Self { core })
+        Ok(Self {
+            core: Rc::new(RefCell::new(core)),
+        })
     }
 
     #[staticmethod]
@@ -46,6 +52,7 @@ impl PyGraph {
         properties: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<u64> {
         self.core
+            .borrow_mut()
             .add_node(
                 external_id,
                 labels.unwrap_or_default(),
@@ -63,52 +70,64 @@ impl PyGraph {
         properties: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<u64> {
         self.core
+            .borrow_mut()
             .add_edge(source, target, edge_type, properties_from_py(properties)?)
             .map_err(to_py_value_error)
     }
 
     fn node_count(&self) -> usize {
-        self.core.node_count()
+        self.core.borrow().node_count()
     }
 
     fn edge_count(&self) -> usize {
-        self.core.edge_count()
+        self.core.borrow().edge_count()
     }
 
     fn variable_count(&self) -> usize {
-        self.core.variable_count()
+        self.core.borrow().variable_count()
     }
 
     fn factor_count(&self) -> usize {
-        self.core.factor_count()
+        self.core.borrow().factor_count()
     }
 
     fn evidence_count(&self) -> usize {
-        self.core.evidence_count()
+        self.core.borrow().evidence_count()
     }
 
     fn trace_count(&self) -> usize {
-        self.core.trace_count()
+        self.core.borrow().trace_count()
     }
 
     fn node_ids(&self) -> Vec<u64> {
-        self.core.node_ids()
+        self.core.borrow().node_ids()
     }
 
     fn edge_ids(&self) -> Vec<u64> {
-        self.core.edge_ids()
+        self.core.borrow().edge_ids()
     }
 
     fn nodes(&self) -> Vec<PyNode> {
-        self.core.nodes().into_iter().map(PyNode::from).collect()
+        self.core
+            .borrow()
+            .nodes()
+            .into_iter()
+            .map(PyNode::from)
+            .collect()
     }
 
     fn edges(&self) -> Vec<PyEdge> {
-        self.core.edges().into_iter().map(PyEdge::from).collect()
+        self.core
+            .borrow()
+            .edges()
+            .into_iter()
+            .map(PyEdge::from)
+            .collect()
     }
 
     fn get_node(&self, node_id: u64) -> PyResult<PyNode> {
         self.core
+            .borrow()
             .get_node(node_id)
             .map(PyNode::from)
             .ok_or_else(|| PyKeyError::new_err(format!("node {node_id} not found")))
@@ -116,6 +135,7 @@ impl PyGraph {
 
     fn get_edge(&self, edge_id: u64) -> PyResult<PyEdge> {
         self.core
+            .borrow()
             .get_edge(edge_id)
             .map(PyEdge::from)
             .ok_or_else(|| PyKeyError::new_err(format!("edge {edge_id} not found")))
@@ -123,6 +143,7 @@ impl PyGraph {
 
     fn get_variable(&self, variable_id: u64) -> PyResult<PyVariable> {
         self.core
+            .borrow()
             .get_variable(variable_id)
             .map(PyVariable::from)
             .ok_or_else(|| PyKeyError::new_err(format!("variable {variable_id} not found")))
@@ -130,6 +151,7 @@ impl PyGraph {
 
     fn get_factor(&self, factor_id: u64) -> PyResult<PyFactor> {
         self.core
+            .borrow()
             .get_factor(factor_id)
             .map(PyFactor::from)
             .ok_or_else(|| PyKeyError::new_err(format!("factor {factor_id} not found")))
@@ -137,6 +159,7 @@ impl PyGraph {
 
     fn get_evidence(&self, evidence_id: u64) -> PyResult<PyEvidence> {
         self.core
+            .borrow()
             .get_evidence(evidence_id)
             .map(PyEvidence::from)
             .ok_or_else(|| PyKeyError::new_err(format!("evidence {evidence_id} not found")))
@@ -144,21 +167,22 @@ impl PyGraph {
 
     fn get_trace(&self, trace_id: u64) -> PyResult<PyTrace> {
         self.core
+            .borrow()
             .get_trace(trace_id)
             .map(PyTrace::from)
             .ok_or_else(|| PyKeyError::new_err(format!("trace {trace_id} not found")))
     }
 
     fn get_node_id(&self, external_id: String) -> Option<u64> {
-        self.core.get_node_id(&external_id)
+        self.core.borrow().get_node_id(&external_id)
     }
 
     fn nodes_with_label(&self, label: String) -> Vec<u64> {
-        self.core.nodes_with_label(&label)
+        self.core.borrow().nodes_with_label(&label)
     }
 
     fn edges_by_type(&self, edge_type: String) -> Vec<u64> {
-        self.core.edges_by_type(&edge_type)
+        self.core.borrow().edges_by_type(&edge_type)
     }
 
     #[pyo3(signature = (key, value=None))]
@@ -168,7 +192,7 @@ impl PyGraph {
         value: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Vec<u64>> {
         let value = optional_property_value_from_py(value)?;
-        Ok(self.core.nodes_with_property(&key, value.as_ref()))
+        Ok(self.core.borrow().nodes_with_property(&key, value.as_ref()))
     }
 
     #[pyo3(signature = (key, value=None))]
@@ -178,7 +202,7 @@ impl PyGraph {
         value: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Vec<u64>> {
         let value = optional_property_value_from_py(value)?;
-        Ok(self.core.edges_with_property(&key, value.as_ref()))
+        Ok(self.core.borrow().edges_with_property(&key, value.as_ref()))
     }
 
     #[pyo3(signature = (node_id, direction="out", edge_type=None))]
@@ -189,6 +213,7 @@ impl PyGraph {
         edge_type: Option<String>,
     ) -> PyResult<Vec<u64>> {
         self.core
+            .borrow()
             .neighbors(node_id, direction, edge_type.as_deref())
             .map_err(to_py_value_error)
     }
@@ -202,6 +227,7 @@ impl PyGraph {
         edge_type: Option<String>,
     ) -> PyResult<Vec<u64>> {
         self.core
+            .borrow()
             .k_hop(start, hops, direction, edge_type.as_deref())
             .map_err(to_py_value_error)
     }
@@ -215,30 +241,40 @@ impl PyGraph {
         edge_type: Option<String>,
     ) -> PyResult<Vec<u64>> {
         self.core
+            .borrow()
             .frontier(&starts, steps, direction, edge_type.as_deref())
             .map_err(to_py_value_error)
     }
 
     fn compact(&mut self) -> PyResult<()> {
-        self.core.compact_segments().map_err(to_py_value_error)
+        self.core
+            .borrow_mut()
+            .compact_segments()
+            .map_err(to_py_value_error)
     }
 
     fn refresh(&mut self) -> PyResult<()> {
-        self.core.refresh().map_err(to_py_value_error)
+        self.core.borrow_mut().refresh().map_err(to_py_value_error)
     }
 
     fn snapshot(&self) -> PyGraphSnapshot {
-        PyGraphSnapshot::new(self.core.snapshot())
+        PyGraphSnapshot::new(self.core.borrow().snapshot())
     }
 
     fn add_nodes(&mut self, records: &Bound<'_, PyAny>) -> PyResult<Vec<u64>> {
         let records = new_node_records_from_py(records)?;
-        self.core.add_nodes(records).map_err(to_py_value_error)
+        self.core
+            .borrow_mut()
+            .add_nodes(records)
+            .map_err(to_py_value_error)
     }
 
     fn add_edges(&mut self, records: &Bound<'_, PyAny>) -> PyResult<Vec<u64>> {
         let records = new_edge_records_from_py(records)?;
-        self.core.add_edges(records).map_err(to_py_value_error)
+        self.core
+            .borrow_mut()
+            .add_edges(records)
+            .map_err(to_py_value_error)
     }
 
     #[pyo3(signature = (start, direction="out", edge_type=None, max_depth=None))]
@@ -250,6 +286,7 @@ impl PyGraph {
         max_depth: Option<usize>,
     ) -> PyResult<Vec<u64>> {
         self.core
+            .borrow()
             .bfs(start, direction, edge_type.as_deref(), max_depth)
             .map_err(to_py_value_error)
     }
@@ -266,6 +303,7 @@ impl PyGraph {
     ) -> PyResult<Py<PyAny>> {
         let path = self
             .core
+            .borrow()
             .shortest_path(
                 start,
                 target,
@@ -280,6 +318,7 @@ impl PyGraph {
     #[pyo3(signature = (edge_type=None))]
     fn connected_components(&self, edge_type: Option<String>) -> PyResult<Vec<Vec<u64>>> {
         self.core
+            .borrow()
             .connected_components(edge_type.as_deref())
             .map_err(to_py_value_error)
     }
@@ -295,6 +334,7 @@ impl PyGraph {
     ) -> PyResult<Py<PyAny>> {
         let scores = self
             .core
+            .borrow()
             .pagerank(iterations, damping, tolerance, edge_type.as_deref())
             .map_err(to_py_value_error)?;
         scores_to_py(py, scores)
@@ -310,6 +350,7 @@ impl PyGraph {
         seed: Option<u64>,
     ) -> PyResult<Vec<u64>> {
         self.core
+            .borrow()
             .random_walk(start, steps, direction, edge_type.as_deref(), seed)
             .map_err(to_py_value_error)
     }
@@ -317,6 +358,7 @@ impl PyGraph {
     #[pyo3(signature = (nodes, edge_type=None))]
     fn subgraph(&self, nodes: Vec<u64>, edge_type: Option<String>) -> PyResult<PyGraphSnapshot> {
         self.core
+            .borrow()
             .subgraph(&nodes, edge_type.as_deref())
             .map(PyGraphSnapshot::new)
             .map_err(to_py_value_error)
@@ -325,6 +367,7 @@ impl PyGraph {
     fn compute_batch(&self, py: Python<'_>, jobs: &Bound<'_, PyAny>) -> PyResult<Vec<Py<PyAny>>> {
         let jobs = compute_jobs_from_py(jobs)?;
         self.core
+            .borrow()
             .compute_batch(&jobs)
             .map_err(to_py_value_error)?
             .into_iter()
@@ -334,12 +377,29 @@ impl PyGraph {
 
     fn query(&self, py: Python<'_>, spec: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         let spec = query_spec_from_py(spec)?;
-        let rows = self.core.query(&spec).map_err(to_py_value_error)?;
+        let rows = self.core.borrow().query(&spec).map_err(to_py_value_error)?;
         query_rows_to_py(py, &rows)
     }
 
     fn query_schema(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         query_schema_to_py(py)
+    }
+
+    #[pyo3(signature = (query, parameters=None))]
+    fn cypher(
+        &mut self,
+        query: &str,
+        parameters: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<PyCypherResult> {
+        let params = params_from_py(parameters)?;
+        cypher::execute_autocommit(&mut self.core.borrow_mut(), query, &params)
+            .map(PyCypherResult::from)
+            .map_err(to_py_value_error)
+    }
+
+    #[pyo3(signature = (write=true))]
+    fn transaction(&self, write: bool) -> PyGraphTransaction {
+        PyGraphTransaction::new(Rc::clone(&self.core), write)
     }
 
     #[pyo3(signature = (seeds, steps, edge_property="probability", damping=1.0, edge_type=None))]
@@ -352,6 +412,7 @@ impl PyGraph {
         edge_type: Option<String>,
     ) -> PyResult<HashMap<u64, f64>> {
         self.core
+            .borrow()
             .propagate(&seeds, steps, edge_type.as_deref(), edge_property, damping)
             .map_err(to_py_value_error)
     }
@@ -366,6 +427,7 @@ impl PyGraph {
         states: Option<Vec<String>>,
     ) -> PyResult<u64> {
         self.core
+            .borrow_mut()
             .add_variable(
                 owner_id,
                 domain,
@@ -385,6 +447,7 @@ impl PyGraph {
         parameters: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<u64> {
         self.core
+            .borrow_mut()
             .add_factor(
                 input_variables,
                 output_variables,
@@ -396,6 +459,7 @@ impl PyGraph {
 
     fn add_factor_table(&mut self, variables: Vec<u64>, values: Vec<f64>) -> PyResult<u64> {
         self.core
+            .borrow_mut()
             .add_factor_table(variables, values)
             .map_err(to_py_value_error)
     }
@@ -407,6 +471,7 @@ impl PyGraph {
         values: Vec<f64>,
     ) -> PyResult<u64> {
         self.core
+            .borrow_mut()
             .add_cpd(variable_id, parent_variables, values)
             .map_err(to_py_value_error)
     }
@@ -418,6 +483,7 @@ impl PyGraph {
         payload: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<u64> {
         self.core
+            .borrow_mut()
             .add_evidence(variable_id, properties_from_py(payload)?)
             .map_err(to_py_value_error)
     }
@@ -425,6 +491,7 @@ impl PyGraph {
     #[pyo3(signature = (payload=None))]
     fn add_trace(&mut self, payload: Option<&Bound<'_, PyDict>>) -> PyResult<u64> {
         self.core
+            .borrow_mut()
             .add_trace(properties_from_py(payload)?)
             .map_err(to_py_value_error)
     }
@@ -442,6 +509,7 @@ impl PyGraph {
         let evidence = evidence_from_py(evidence)?;
         let active = self
             .core
+            .borrow()
             .compile_active_subgraph(&query_variables, &evidence, radius, max_nodes, max_factors)
             .map_err(to_py_value_error)?;
         active_subgraph_to_py(py, &active)
@@ -462,6 +530,7 @@ impl PyGraph {
         let evidence = evidence_from_py(evidence)?;
         let result = self
             .core
+            .borrow_mut()
             .belief_propagation(
                 query_variables.as_deref(),
                 &evidence,
@@ -479,6 +548,7 @@ impl PyGraph {
         distribution_to_py(
             py,
             self.core
+                .borrow()
                 .posterior(variable_id)
                 .map_err(to_py_value_error)?,
         )
@@ -495,6 +565,7 @@ impl PyGraph {
         damping: f64,
     ) -> PyResult<HashMap<u64, f64>> {
         self.core
+            .borrow()
             .local_propagate(
                 &seeds,
                 radius,

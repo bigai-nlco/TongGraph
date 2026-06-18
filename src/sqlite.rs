@@ -63,6 +63,11 @@ extern "C" {
 pub(crate) trait GraphStore {
     fn insert_nodes(&self, nodes: &[NodeRecord]) -> Result<(), String>;
     fn insert_edges(&self, edges: &[EdgeRecord]) -> Result<(), String>;
+    fn insert_graph_records(
+        &self,
+        nodes: &[NodeRecord],
+        edges: &[EdgeRecord],
+    ) -> Result<(), String>;
     fn insert_variable(&self, variable: &VariableRecord) -> Result<(), String>;
     fn insert_factor(&self, factor: &FactorRecord) -> Result<(), String>;
     fn insert_factor_table(&self, factor_table: &FactorTableRecord) -> Result<(), String>;
@@ -123,19 +128,23 @@ impl SqliteStore {
     }
 
     pub(crate) fn insert_nodes(&self, nodes: &[NodeRecord]) -> Result<(), String> {
+        self.insert_graph_records(nodes, &[])
+    }
+
+    pub(crate) fn insert_edges(&self, edges: &[EdgeRecord]) -> Result<(), String> {
+        self.insert_graph_records(&[], edges)
+    }
+
+    pub(crate) fn insert_graph_records(
+        &self,
+        nodes: &[NodeRecord],
+        edges: &[EdgeRecord],
+    ) -> Result<(), String> {
         self.exec("BEGIN IMMEDIATE;")?;
         let result = (|| {
             for node in nodes {
                 self.insert_node_row(node)?;
             }
-            Ok(())
-        })();
-        self.finish_transaction(result)
-    }
-
-    pub(crate) fn insert_edges(&self, edges: &[EdgeRecord]) -> Result<(), String> {
-        self.exec("BEGIN IMMEDIATE;")?;
-        let result = (|| {
             for edge in edges {
                 self.insert_edge_row(edge)?;
             }
@@ -456,7 +465,9 @@ impl SqliteStore {
         self.exec(
             "
             PRAGMA journal_mode = WAL;
-            PRAGMA synchronous = NORMAL;
+            PRAGMA synchronous = FULL;
+            PRAGMA foreign_keys = ON;
+            PRAGMA busy_timeout = 5000;
             CREATE TABLE IF NOT EXISTS metadata (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
@@ -827,6 +838,14 @@ impl GraphStore for SqliteStore {
 
     fn insert_edges(&self, edges: &[EdgeRecord]) -> Result<(), String> {
         Self::insert_edges(self, edges)
+    }
+
+    fn insert_graph_records(
+        &self,
+        nodes: &[NodeRecord],
+        edges: &[EdgeRecord],
+    ) -> Result<(), String> {
+        Self::insert_graph_records(self, nodes, edges)
     }
 
     fn insert_variable(&self, variable: &VariableRecord) -> Result<(), String> {

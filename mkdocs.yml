@@ -57,12 +57,14 @@ nav:
       - Architecture: design/architecture.md
       - Algorithms: design/algorithms.md
       - Query Layer: design/query-layer.md
+      - Cypher Compatibility: design/cypher-compatibility.md
       - Belief Propagation: design/belief-propagation.md
       - Persistence: design/persistence.md
   - Examples:
       - Examples: examples/index.md
       - Property Graph Basics: examples/property-graph-basics.md
       - Structured Query Layer: examples/structured-query-layer.md
+      - Cypher Compatibility: examples/cypher-compatibility.md
       - Runtime Algorithms And Batch Compute: examples/runtime-algorithms.md
       - Local Probability Transfer: examples/local-probability-transfer.md
       - SQLite Reopen: examples/sqlite-reopen.md

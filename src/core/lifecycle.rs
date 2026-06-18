@@ -169,6 +169,60 @@ impl GraphCore {
         }
     }
 
+    pub(crate) fn transaction_snapshot(&self) -> (Self, u64, u64) {
+        (self.snapshot(), self.next_node_id, self.next_edge_id)
+    }
+
+    pub(crate) fn commit_transaction_snapshot(
+        &mut self,
+        staged: &Self,
+        base_next_node_id: u64,
+        base_next_edge_id: u64,
+    ) -> Result<(), String> {
+        if self.next_node_id != base_next_node_id || self.next_edge_id != base_next_edge_id {
+            return Err(
+                "graph changed since transaction started; rollback and retry the transaction"
+                    .to_string(),
+            );
+        }
+
+        let nodes = staged
+            .nodes
+            .iter()
+            .flatten()
+            .filter(|node| node.id >= base_next_node_id)
+            .cloned()
+            .collect::<Vec<_>>();
+        let edges = staged
+            .edges
+            .iter()
+            .flatten()
+            .filter(|edge| edge.id >= base_next_edge_id)
+            .cloned()
+            .collect::<Vec<_>>();
+
+        if nodes.is_empty() && edges.is_empty() {
+            return Ok(());
+        }
+
+        if self.store.is_some() {
+            self.ensure_store_current()?;
+            self.store
+                .as_ref()
+                .unwrap()
+                .insert_graph_records(&nodes, &edges)?;
+            self.refresh_store_op_seq()?;
+        }
+
+        for node in nodes {
+            self.insert_node_record(node)?;
+        }
+        for edge in edges {
+            self.insert_edge_record(edge)?;
+        }
+        self.maybe_auto_compact_segments()
+    }
+
     pub(super) fn ensure_store_current(&self) -> Result<(), String> {
         let Some(store) = &self.store else {
             return Ok(());

@@ -246,6 +246,100 @@ def test_query_layer_rejects_wrong_pattern_shapes() -> None:
         )
 
 
+def test_cypher_api_create_match_snapshot_transaction_and_reopen(tmp_path: Path) -> None:
+    db_path = tmp_path / "cypher.db"
+    graph = Graph(str(db_path))
+
+    created = graph.cypher(
+        """
+        CREATE (a:Person {external_id: 'alice', name: 'Alice', rank: 3})
+               -[:KNOWS {since: 2026}]->
+               (b:Person {external_id: 'bob', name: 'Bob', rank: 2})
+        RETURN a, b
+        """
+    )
+    assert created.keys == ["a", "b"]
+    assert created.summary["statement_type"] == "write"
+    assert created.summary["nodes_created"] == 2
+    assert created.summary["relationships_created"] == 1
+    assert len(created) == 1
+    assert created.records[0]["a"].external_id == "alice"
+    assert created.records[0]["b"].properties["name"] == "Bob"
+
+    rows = graph.cypher(
+        """
+        MATCH (a:Person)-[r:KNOWS]->(b:Person)
+        WHERE a.name = $name AND b.rank IN [2, 3]
+        RETURN a.name AS source, type(r) AS rel, b.name AS target, id(a) AS source_id
+        ORDER BY target
+        LIMIT 5
+        """,
+        {"name": "Alice"},
+    )
+    assert rows.keys == ["source", "rel", "target", "source_id"]
+    assert rows.records == [
+        {"source": "Alice", "rel": "KNOWS", "target": "Bob", "source_id": 0}
+    ]
+    assert graph.cypher(
+        "MATCH (b:Person) WHERE b.rank IN [$rank] RETURN b.name AS name",
+        {"rank": 2},
+    ).records == [{"name": "Bob"}]
+
+    snapshot = graph.snapshot()
+    assert snapshot.cypher("MATCH (n:Person) RETURN count(*) AS total").records == [
+        {"total": 2}
+    ]
+    with pytest.raises(ValueError, match="cannot execute write"):
+        snapshot.cypher("CREATE (n:Person {name: 'Nope'}) RETURN n")
+
+    with graph.transaction() as tx:
+        staged = tx.run("CREATE (c:Person {external_id: 'carol', name: 'Carol'}) RETURN c")
+        assert staged.records[0]["c"].external_id == "carol"
+        assert graph.get_node_id("carol") is None
+    assert graph.get_node_id("carol") == 2
+
+    with graph.transaction() as tx:
+        tx.run("CREATE (f:Person {external_id: 'frank', name: 'Frank'}) RETURN f")
+        tx.commit()
+    assert graph.get_node_id("frank") == 3
+
+    with graph.transaction() as tx:
+        tx.run("CREATE (g:Person {external_id: 'grace', name: 'Grace'}) RETURN g")
+        tx.rollback()
+    assert graph.get_node_id("grace") is None
+
+    tx = graph.transaction()
+    with pytest.raises(ValueError, match="relationship type"):
+        tx.run(
+            """
+            CREATE (x:Person {external_id: 'partial:x'})
+                   -[:]->
+                   (y:Person {external_id: 'partial:y'})
+            RETURN x
+            """
+        )
+    tx.commit()
+    assert graph.get_node_id("partial:x") is None
+    assert graph.get_node_id("partial:y") is None
+
+    tx = graph.transaction()
+    tx.run("CREATE (d:Person {external_id: 'dave', name: 'Dave'}) RETURN d")
+    tx.rollback()
+    assert graph.get_node_id("dave") is None
+
+    read_only = graph.transaction(write=False)
+    with pytest.raises(ValueError, match="requires a writable"):
+        read_only.run("CREATE (e:Person {name: 'Eve'}) RETURN e")
+    read_only.rollback()
+
+    del graph
+    reopened = Graph(str(db_path))
+    reopened_rows = reopened.cypher(
+        "MATCH (n:Person) WHERE n.name CONTAINS 'o' RETURN n.name AS name ORDER BY name DESC"
+    )
+    assert reopened_rows.records == [{"name": "Carol"}, {"name": "Bob"}]
+
+
 def test_graph_compute_runtime_algorithms_and_batch() -> None:
     graph = Graph()
     a = graph.add_node("a")

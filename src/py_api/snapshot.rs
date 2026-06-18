@@ -1,14 +1,16 @@
 use super::compute::{
     compute_jobs_from_py, compute_result_to_py, scores_to_py, shortest_path_to_py,
 };
+use super::cypher::{params_from_py, PyCypherResult};
 use super::properties::optional_property_value_from_py;
 use super::query::{query_rows_to_py, query_schema_to_py, query_spec_from_py};
 use super::records::{PyEdge, PyEvidence, PyFactor, PyNode, PyTrace, PyVariable};
 use super::to_py_value_error;
 use crate::core::GraphCore;
+use crate::cypher;
 use pyo3::exceptions::PyKeyError;
 use pyo3::prelude::*;
-use pyo3::types::PyAny;
+use pyo3::types::{PyAny, PyDict};
 
 #[pyclass(name = "GraphSnapshot", unsendable)]
 pub(crate) struct PyGraphSnapshot {
@@ -274,5 +276,17 @@ impl PyGraphSnapshot {
 
     fn query_schema(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         query_schema_to_py(py)
+    }
+
+    #[pyo3(signature = (query, parameters=None))]
+    fn cypher(
+        &self,
+        query: &str,
+        parameters: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<PyCypherResult> {
+        let params = params_from_py(parameters)?;
+        cypher::execute_snapshot(&self.core, query, &params)
+            .map(PyCypherResult::from)
+            .map_err(to_py_value_error)
     }
 }

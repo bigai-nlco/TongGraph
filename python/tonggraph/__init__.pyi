@@ -23,6 +23,28 @@ def query_nl(
     """Compile a natural-language question into the query DSL and execute it."""
     ...
 
+class CypherResult:
+    """Result returned by Cypher execution."""
+
+    @property
+    def keys(self) -> list[str]:
+        """Returned column names in order."""
+        ...
+
+    @property
+    def records(self) -> list[dict[str, Any]]:
+        """Rows as dictionaries keyed by returned column name."""
+        ...
+
+    @property
+    def summary(self) -> dict[str, Any]:
+        """Execution counters and statement metadata."""
+        ...
+
+    def __len__(self) -> int:
+        """Return the number of result records."""
+        ...
+
 class Node:
     """Immutable node record returned by graph lookup methods.
 
@@ -360,6 +382,41 @@ class GraphSnapshot:
         """Return the structured query DSL schema."""
         ...
 
+    def cypher(
+        self,
+        query: str,
+        parameters: Mapping[str, Any] | None = None,
+    ) -> CypherResult:
+        """Run a read-only Cypher query against the snapshot."""
+        ...
+
+class GraphTransaction:
+    """Explicit staged Cypher transaction."""
+
+    def run(
+        self,
+        query: str,
+        parameters: Mapping[str, Any] | None = None,
+    ) -> CypherResult:
+        """Run a Cypher query inside this transaction."""
+        ...
+
+    def commit(self) -> None:
+        """Commit staged changes."""
+        ...
+
+    def rollback(self) -> None:
+        """Discard staged changes."""
+        ...
+
+    def __enter__(self) -> GraphTransaction:
+        """Enter the transaction context."""
+        ...
+
+    def __exit__(self, exc_type: Any, exc: Any, traceback: Any) -> bool:
+        """Commit on success and roll back on exception."""
+        ...
+
 class Graph(GraphSnapshot):
     """Mutable embedded graph database.
 
@@ -410,6 +467,18 @@ class Graph(GraphSnapshot):
 
     def refresh(self) -> None:
         """Reload a SQLite-backed graph from disk after another handle writes."""
+        ...
+
+    def cypher(
+        self,
+        query: str,
+        parameters: Mapping[str, Any] | None = None,
+    ) -> CypherResult:
+        """Run a Cypher query in an autocommit transaction."""
+        ...
+
+    def transaction(self, write: bool = True) -> GraphTransaction:
+        """Create an explicit staged Cypher transaction."""
         ...
 
     def snapshot(self) -> GraphSnapshot:

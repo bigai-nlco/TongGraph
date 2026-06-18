@@ -1,5 +1,6 @@
 mod codec;
 mod core;
+mod cypher;
 mod models;
 mod py_api;
 mod sqlite;

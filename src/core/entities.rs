@@ -116,7 +116,7 @@ impl GraphCore {
         self.insert_edge_record(record)
     }
 
-    fn insert_node_record(&mut self, record: NodeRecord) -> Result<(), String> {
+    pub(super) fn insert_node_record(&mut self, record: NodeRecord) -> Result<(), String> {
         if self.node_by_external_id.contains_key(&record.external_id) {
             return Err(format!(
                 "external_id {:?} already exists",
@@ -148,7 +148,7 @@ impl GraphCore {
         Ok(())
     }
 
-    fn insert_edge_record(&mut self, record: EdgeRecord) -> Result<(), String> {
+    pub(super) fn insert_edge_record(&mut self, record: EdgeRecord) -> Result<(), String> {
         let id = record.id;
         self.ensure_edge_slot(id);
         if self.edges[id as usize].is_some() {

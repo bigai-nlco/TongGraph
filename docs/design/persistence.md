@@ -67,7 +67,8 @@ thresholds in `src/core/lifecycle.rs`.
 
 ## Operational Notes
 
-- SQLite uses WAL journal mode and normal synchronous mode.
+- SQLite uses WAL journal mode, full synchronous mode, foreign keys, and a
+  busy timeout for local ACID-oriented writes.
 - A `Graph` handle is a single live writer view. If another handle appends to
   the same SQLite database, stale handles raise a refresh-required error before
   writing. Call `Graph.refresh()` to reload from SQLite.

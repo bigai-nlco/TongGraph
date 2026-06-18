@@ -9,6 +9,8 @@ python`.
 - [Structured Query Layer](structured-query-layer.md): typed path matching,
   property filters, snapshots, and the provider-neutral natural-language query
   hook.
+- [Cypher Compatibility](cypher-compatibility.md): embedded `Graph.cypher()`,
+  result records, parameters, snapshots, and staged transactions.
 - [Runtime Algorithms And Batch Compute](runtime-algorithms.md): BFS, weighted
   shortest path, connected components, PageRank, random walk, and
   `compute_batch`.

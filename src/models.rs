@@ -40,6 +40,21 @@ impl PropertyValue {
 pub(crate) type PropertyMap = HashMap<String, PropertyValue>;
 
 #[derive(Clone, Debug)]
+pub(crate) struct NewNodeRecord {
+    pub(crate) external_id: Option<String>,
+    pub(crate) labels: Vec<String>,
+    pub(crate) properties: PropertyMap,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct NewEdgeRecord {
+    pub(crate) source: u64,
+    pub(crate) target: u64,
+    pub(crate) edge_type: String,
+    pub(crate) properties: PropertyMap,
+}
+
+#[derive(Clone, Debug)]
 pub(crate) struct NodeRecord {
     pub(crate) id: u64,
     pub(crate) external_id: String,

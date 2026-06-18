@@ -202,6 +202,22 @@ class GraphSnapshot:
         """Return the number of trace records."""
         ...
 
+    def node_ids(self) -> list[int]:
+        """Return live node IDs ordered by internal ID."""
+        ...
+
+    def edge_ids(self) -> list[int]:
+        """Return live edge IDs ordered by internal ID."""
+        ...
+
+    def nodes(self) -> list[Node]:
+        """Return node records ordered by internal ID."""
+        ...
+
+    def edges(self) -> list[Edge]:
+        """Return edge records ordered by internal ID."""
+        ...
+
     def get_node(self, node_id: int) -> Node:
         """Return a node record by ID.
 
@@ -380,8 +396,20 @@ class Graph(GraphSnapshot):
         """Add a directed edge and return its internal ID."""
         ...
 
+    def add_nodes(self, records: Sequence[Mapping[str, Any]]) -> list[int]:
+        """Atomically add node records and return their internal IDs."""
+        ...
+
+    def add_edges(self, records: Sequence[Mapping[str, Any]]) -> list[int]:
+        """Atomically add directed edge records and return their internal IDs."""
+        ...
+
     def compact(self) -> None:
         """Compact the mutable adjacency overlay into a persisted compute segment."""
+        ...
+
+    def refresh(self) -> None:
+        """Reload a SQLite-backed graph from disk after another handle writes."""
         ...
 
     def snapshot(self) -> GraphSnapshot:
@@ -394,6 +422,7 @@ class Graph(GraphSnapshot):
         steps: int,
         edge_property: str = "probability",
         damping: float = 1.0,
+        edge_type: str | None = None,
     ) -> dict[int, float]:
         """Transfer probability mass over outgoing edges for a fixed number of steps."""
         ...

@@ -131,12 +131,32 @@ impl GraphCore {
         self.traces.iter().flatten().count()
     }
 
+    pub(crate) fn node_ids(&self) -> Vec<u64> {
+        self.existing_node_ids()
+    }
+
+    pub(crate) fn edge_ids(&self) -> Vec<u64> {
+        self.edges
+            .iter()
+            .enumerate()
+            .filter_map(|(id, edge)| edge.as_ref().map(|_| id as u64))
+            .collect()
+    }
+
     pub(crate) fn get_node(&self, node_id: u64) -> Option<NodeRecord> {
         self.nodes.get(node_id as usize).and_then(Clone::clone)
     }
 
     pub(crate) fn get_edge(&self, edge_id: u64) -> Option<EdgeRecord> {
         self.edges.get(edge_id as usize).and_then(Clone::clone)
+    }
+
+    pub(crate) fn nodes(&self) -> Vec<NodeRecord> {
+        self.nodes.iter().filter_map(Clone::clone).collect()
+    }
+
+    pub(crate) fn edges(&self) -> Vec<EdgeRecord> {
+        self.edges.iter().filter_map(Clone::clone).collect()
     }
 
     pub(crate) fn get_variable(&self, variable_id: u64) -> Option<VariableRecord> {

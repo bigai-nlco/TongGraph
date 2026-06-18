@@ -55,4 +55,5 @@ pub(crate) struct GraphCore {
     next_evidence_id: u64,
     next_trace_id: u64,
     store: Option<Box<dyn GraphStore>>,
+    store_op_seq: Option<u64>,
 }

@@ -38,7 +38,8 @@ Compacted adjacency segments are stored under:
 The manifest includes the segment format, node count, edge count, and segment
 file name. When a graph reopens, TongGraph checks that the sidecar matches the
 expected node and edge counts before loading it. If no usable segment exists,
-the core rebuilds one from SQLite records.
+or the manifest/file is corrupt, the core rebuilds one from SQLite records and
+re-saves a valid sidecar.
 
 ## Write Flow
 
@@ -67,6 +68,10 @@ thresholds in `src/core/lifecycle.rs`.
 ## Operational Notes
 
 - SQLite uses WAL journal mode and normal synchronous mode.
+- A `Graph` handle is a single live writer view. If another handle appends to
+  the same SQLite database, stale handles raise a refresh-required error before
+  writing. Call `Graph.refresh()` to reload from SQLite.
+- `add_nodes()` and `add_edges()` use one SQLite transaction per batch.
 - Properties are limited to Python-compatible scalar values: `bool`, `int`,
   finite `float`, and `str`.
 - Local `.db`, `.db-shm`, `.db-wal`, and `.segments/` artifacts are ignored by

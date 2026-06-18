@@ -31,8 +31,10 @@ impl GraphCore {
             posterior,
         };
 
-        if let Some(store) = &self.store {
-            store.insert_variable(&record)?;
+        if self.store.is_some() {
+            self.ensure_store_current()?;
+            self.store.as_ref().unwrap().insert_variable(&record)?;
+            self.refresh_store_op_seq()?;
         }
         self.insert_variable_record(record)?;
         Ok(id)
@@ -60,8 +62,10 @@ impl GraphCore {
             parameters,
         };
 
-        if let Some(store) = &self.store {
-            store.insert_factor(&record)?;
+        if self.store.is_some() {
+            self.ensure_store_current()?;
+            self.store.as_ref().unwrap().insert_factor(&record)?;
+            self.refresh_store_op_seq()?;
         }
         self.insert_factor_record(record)?;
         Ok(id)
@@ -85,8 +89,9 @@ impl GraphCore {
             values,
             is_cpd: false,
         };
-        if let Some(store) = &self.store {
-            store.insert_factor_table(&record)?;
+        if self.store.is_some() {
+            self.ensure_store_current()?;
+            self.store.as_ref().unwrap().insert_factor_table(&record)?;
         }
         self.insert_factor_table_record(record)?;
         Ok(factor_id)
@@ -115,8 +120,9 @@ impl GraphCore {
             values,
             is_cpd: true,
         };
-        if let Some(store) = &self.store {
-            store.insert_factor_table(&record)?;
+        if self.store.is_some() {
+            self.ensure_store_current()?;
+            self.store.as_ref().unwrap().insert_factor_table(&record)?;
         }
         self.insert_factor_table_record(record)?;
         Ok(factor_id)
@@ -137,8 +143,10 @@ impl GraphCore {
             payload,
         };
 
-        if let Some(store) = &self.store {
-            store.insert_evidence(&record)?;
+        if self.store.is_some() {
+            self.ensure_store_current()?;
+            self.store.as_ref().unwrap().insert_evidence(&record)?;
+            self.refresh_store_op_seq()?;
         }
         self.insert_evidence_record(record)?;
         Ok(id)
@@ -150,8 +158,10 @@ impl GraphCore {
         let id = self.next_trace_id;
         let record = TraceRecord { id, payload };
 
-        if let Some(store) = &self.store {
-            store.insert_trace(&record)?;
+        if self.store.is_some() {
+            self.ensure_store_current()?;
+            self.store.as_ref().unwrap().insert_trace(&record)?;
+            self.refresh_store_op_seq()?;
         }
         self.insert_trace_record(record)?;
         Ok(id)

@@ -99,6 +99,7 @@ impl GraphCore {
         &self,
         seeds: &HashMap<u64, f64>,
         steps: usize,
+        edge_type: Option<&str>,
         edge_property: &str,
         damping: f64,
     ) -> Result<HashMap<u64, f64>, String> {
@@ -122,6 +123,11 @@ impl GraphCore {
                     let Some(edge) = self.edge_record(edge_id) else {
                         continue;
                     };
+                    if let Some(filter) = edge_type {
+                        if edge.edge_type != filter {
+                            continue;
+                        }
+                    }
                     let weight = edge_weight(edge, edge_property)?;
                     if weight == 0.0 {
                         continue;

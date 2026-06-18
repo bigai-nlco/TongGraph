@@ -61,8 +61,8 @@ extern "C" {
 }
 
 pub(crate) trait GraphStore {
-    fn insert_node(&self, node: &NodeRecord) -> Result<(), String>;
-    fn insert_edge(&self, edge: &EdgeRecord) -> Result<(), String>;
+    fn insert_nodes(&self, nodes: &[NodeRecord]) -> Result<(), String>;
+    fn insert_edges(&self, edges: &[EdgeRecord]) -> Result<(), String>;
     fn insert_variable(&self, variable: &VariableRecord) -> Result<(), String>;
     fn insert_factor(&self, factor: &FactorRecord) -> Result<(), String>;
     fn insert_factor_table(&self, factor_table: &FactorTableRecord) -> Result<(), String>;
@@ -88,6 +88,8 @@ pub(crate) trait GraphStore {
         node_count: usize,
         edge_count: usize,
     ) -> Result<(), String>;
+    fn current_op_seq(&self) -> Result<u64, String>;
+    fn path(&self) -> String;
 }
 
 pub(crate) struct SqliteStore {
@@ -120,38 +122,23 @@ impl SqliteStore {
         Ok(store)
     }
 
-    pub(crate) fn insert_node(&self, node: &NodeRecord) -> Result<(), String> {
+    pub(crate) fn insert_nodes(&self, nodes: &[NodeRecord]) -> Result<(), String> {
         self.exec("BEGIN IMMEDIATE;")?;
         let result = (|| {
-            let mut stmt = self.prepare(
-                "INSERT INTO nodes (id, external_id, labels, properties) VALUES (?1, ?2, ?3, ?4);",
-            )?;
-            stmt.bind_i64(1, node.id)?;
-            stmt.bind_text(2, &node.external_id)?;
-            stmt.bind_text(3, &encode_list(&node.labels))?;
-            stmt.bind_text(4, &encode_map(&node.properties))?;
-            stmt.step_done()?;
-            self.insert_node_property_rows(node.id, &node.properties)?;
-            self.append_op("add_node", node.id, &node.external_id)?;
+            for node in nodes {
+                self.insert_node_row(node)?;
+            }
             Ok(())
         })();
         self.finish_transaction(result)
     }
 
-    pub(crate) fn insert_edge(&self, edge: &EdgeRecord) -> Result<(), String> {
+    pub(crate) fn insert_edges(&self, edges: &[EdgeRecord]) -> Result<(), String> {
         self.exec("BEGIN IMMEDIATE;")?;
         let result = (|| {
-            let mut stmt = self.prepare(
-                "INSERT INTO edges (id, source, target, edge_type, properties) VALUES (?1, ?2, ?3, ?4, ?5);",
-            )?;
-            stmt.bind_i64(1, edge.id)?;
-            stmt.bind_i64(2, edge.source)?;
-            stmt.bind_i64(3, edge.target)?;
-            stmt.bind_text(4, &edge.edge_type)?;
-            stmt.bind_text(5, &encode_map(&edge.properties))?;
-            stmt.step_done()?;
-            self.insert_edge_property_rows(edge.id, &edge.properties)?;
-            self.append_op("add_edge", edge.id, &edge.edge_type)?;
+            for edge in edges {
+                self.insert_edge_row(edge)?;
+            }
             Ok(())
         })();
         self.finish_transaction(result)
@@ -417,24 +404,19 @@ impl SqliteStore {
         if !manifest_path.exists() {
             return Ok(None);
         }
-        let manifest = fs::read_to_string(&manifest_path).map_err(|error| {
-            format!(
-                "failed to read segment manifest {}: {error}",
-                manifest_path.display()
-            )
-        })?;
-        let Some(segment_file) = parse_segment_manifest(&manifest, expected_nodes, expected_edges)?
+        let Ok(manifest) = fs::read_to_string(&manifest_path) else {
+            return Ok(None);
+        };
+        let Some(segment_file) =
+            parse_segment_manifest(&manifest, expected_nodes, expected_edges).unwrap_or(None)
         else {
             return Ok(None);
         };
         let segment_path = self.segment_dir().join(segment_file);
-        let bytes = fs::read(&segment_path).map_err(|error| {
-            format!(
-                "failed to read segment file {}: {error}",
-                segment_path.display()
-            )
-        })?;
-        ComputeSegment::from_bytes(&bytes, expected_nodes, expected_edges).map(Some)
+        let Ok(bytes) = fs::read(&segment_path) else {
+            return Ok(None);
+        };
+        Ok(ComputeSegment::from_bytes(&bytes, expected_nodes, expected_edges).ok())
     }
 
     pub(crate) fn save_segment(
@@ -619,6 +601,19 @@ impl SqliteStore {
         Ok(())
     }
 
+    fn insert_node_row(&self, node: &NodeRecord) -> Result<(), String> {
+        let mut stmt = self.prepare(
+            "INSERT INTO nodes (id, external_id, labels, properties) VALUES (?1, ?2, ?3, ?4);",
+        )?;
+        stmt.bind_i64(1, node.id)?;
+        stmt.bind_text(2, &node.external_id)?;
+        stmt.bind_text(3, &encode_list(&node.labels))?;
+        stmt.bind_text(4, &encode_map(&node.properties))?;
+        stmt.step_done()?;
+        self.insert_node_property_rows(node.id, &node.properties)?;
+        self.append_op("add_node", node.id, &node.external_id)
+    }
+
     fn insert_variable_state_rows(
         &self,
         variable_id: u64,
@@ -684,6 +679,20 @@ impl SqliteStore {
         Ok(())
     }
 
+    fn insert_edge_row(&self, edge: &EdgeRecord) -> Result<(), String> {
+        let mut stmt = self.prepare(
+            "INSERT INTO edges (id, source, target, edge_type, properties) VALUES (?1, ?2, ?3, ?4, ?5);",
+        )?;
+        stmt.bind_i64(1, edge.id)?;
+        stmt.bind_i64(2, edge.source)?;
+        stmt.bind_i64(3, edge.target)?;
+        stmt.bind_text(4, &edge.edge_type)?;
+        stmt.bind_text(5, &encode_map(&edge.properties))?;
+        stmt.step_done()?;
+        self.insert_edge_property_rows(edge.id, &edge.properties)?;
+        self.append_op("add_edge", edge.id, &edge.edge_type)
+    }
+
     fn insert_property_catalog_row(
         &self,
         scope: &str,
@@ -742,6 +751,15 @@ impl SqliteStore {
         stmt.bind_i64(2, object_id)?;
         stmt.bind_text(3, payload)?;
         stmt.step_done()
+    }
+
+    pub(crate) fn current_op_seq(&self) -> Result<u64, String> {
+        let mut stmt = self.prepare("SELECT COALESCE(MAX(seq), 0) FROM op_log;")?;
+        match stmt.step()? {
+            SQLITE_ROW => stmt.column_i64(0),
+            SQLITE_DONE => Ok(0),
+            rc => Err(format!("unexpected SQLite step result {rc}")),
+        }
     }
 
     fn finish_transaction(&self, result: Result<(), String>) -> Result<(), String> {
@@ -803,12 +821,12 @@ impl Drop for SqliteStore {
 }
 
 impl GraphStore for SqliteStore {
-    fn insert_node(&self, node: &NodeRecord) -> Result<(), String> {
-        Self::insert_node(self, node)
+    fn insert_nodes(&self, nodes: &[NodeRecord]) -> Result<(), String> {
+        Self::insert_nodes(self, nodes)
     }
 
-    fn insert_edge(&self, edge: &EdgeRecord) -> Result<(), String> {
-        Self::insert_edge(self, edge)
+    fn insert_edges(&self, edges: &[EdgeRecord]) -> Result<(), String> {
+        Self::insert_edges(self, edges)
     }
 
     fn insert_variable(&self, variable: &VariableRecord) -> Result<(), String> {
@@ -882,6 +900,14 @@ impl GraphStore for SqliteStore {
         edge_count: usize,
     ) -> Result<(), String> {
         Self::save_segment(self, segment, node_count, edge_count)
+    }
+
+    fn current_op_seq(&self) -> Result<u64, String> {
+        Self::current_op_seq(self)
+    }
+
+    fn path(&self) -> String {
+        self.path.to_string_lossy().into_owned()
     }
 }
 

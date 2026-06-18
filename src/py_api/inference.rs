@@ -1,4 +1,5 @@
 use crate::core::{ActiveSubgraph, BeliefPropagationResult};
+use crate::models::PropertyValue;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict};
@@ -49,6 +50,8 @@ pub(super) fn belief_result_to_py(
     dict.set_item("converged", result.converged)?;
     dict.set_item("max_residual", result.max_residual)?;
     dict.set_item("trace_id", result.trace_id)?;
+    dict.set_item("warnings", result.warnings)?;
+    dict.set_item("diagnostics", diagnostics_to_py(py, result.diagnostics)?)?;
     Ok(dict.into_any().unbind())
 }
 
@@ -74,6 +77,22 @@ pub(super) fn distribution_to_py(
     let dict = PyDict::new(py);
     for (state, probability) in distribution {
         dict.set_item(state, probability)?;
+    }
+    Ok(dict.into_any().unbind())
+}
+
+fn diagnostics_to_py(
+    py: Python<'_>,
+    diagnostics: BTreeMap<String, PropertyValue>,
+) -> PyResult<Py<PyAny>> {
+    let dict = PyDict::new(py);
+    for (key, value) in diagnostics {
+        match value {
+            PropertyValue::Bool(value) => dict.set_item(key, value)?,
+            PropertyValue::Int(value) => dict.set_item(key, value)?,
+            PropertyValue::Float(value) => dict.set_item(key, value)?,
+            PropertyValue::String(value) => dict.set_item(key, value)?,
+        }
     }
     Ok(dict.into_any().unbind())
 }

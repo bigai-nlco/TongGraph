@@ -47,6 +47,22 @@ impl PyGraphSnapshot {
         self.core.trace_count()
     }
 
+    fn node_ids(&self) -> Vec<u64> {
+        self.core.node_ids()
+    }
+
+    fn edge_ids(&self) -> Vec<u64> {
+        self.core.edge_ids()
+    }
+
+    fn nodes(&self) -> Vec<PyNode> {
+        self.core.nodes().into_iter().map(PyNode::from).collect()
+    }
+
+    fn edges(&self) -> Vec<PyEdge> {
+        self.core.edges().into_iter().map(PyEdge::from).collect()
+    }
+
     fn get_node(&self, node_id: u64) -> PyResult<PyNode> {
         self.core
             .get_node(node_id)

@@ -79,7 +79,9 @@ residual asynchronous schedule:
 5. Stop when residual is below `tolerance` or `max_iters` is reached.
 
 The result dictionary exposes `schedule`, `iterations`, `messages_updated`,
-`converged`, `max_residual`, `trace_id`, `active`, and `beliefs`.
+`converged`, `max_residual`, `trace_id`, `active`, `beliefs`, `warnings`, and
+`diagnostics`. Warnings flag truncated active subgraphs, non-convergence, large
+active graphs, and runs that consume most of the configured iteration budget.
 
 ## CPD Table Ordering
 

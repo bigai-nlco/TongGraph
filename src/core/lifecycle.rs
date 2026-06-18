@@ -30,6 +30,7 @@ impl GraphCore {
             next_evidence_id: 0,
             next_trace_id: 0,
             store: None,
+            store_op_seq: None,
         }
     }
 
@@ -71,13 +72,25 @@ impl GraphCore {
         for trace in store.load_traces()? {
             core.insert_loaded_trace(trace)?;
         }
+        core.store_op_seq = Some(store.current_op_seq()?);
         core.store = Some(store);
         Ok(core)
     }
 
     pub(crate) fn compact_segments(&mut self) -> Result<(), String> {
+        self.ensure_store_current()?;
         self.rebuild_compacted_segment();
         self.persist_segment()
+    }
+
+    pub(crate) fn refresh(&mut self) -> Result<(), String> {
+        let path = self
+            .store
+            .as_ref()
+            .map(|store| store.path())
+            .ok_or_else(|| "refresh is only available for SQLite-backed graphs".to_string())?;
+        *self = Self::open(&path)?;
+        Ok(())
     }
 
     pub(super) fn maybe_auto_compact_segments(&mut self) -> Result<(), String> {
@@ -152,6 +165,29 @@ impl GraphCore {
             next_evidence_id: self.next_evidence_id,
             next_trace_id: self.next_trace_id,
             store: None,
+            store_op_seq: None,
         }
+    }
+
+    pub(super) fn ensure_store_current(&self) -> Result<(), String> {
+        let Some(store) = &self.store else {
+            return Ok(());
+        };
+        let current = store.current_op_seq()?;
+        if self.store_op_seq == Some(current) {
+            Ok(())
+        } else {
+            Err(
+                "SQLite graph has changed since this handle was opened; call refresh() before writing"
+                    .to_string(),
+            )
+        }
+    }
+
+    pub(super) fn refresh_store_op_seq(&mut self) -> Result<(), String> {
+        if let Some(store) = &self.store {
+            self.store_op_seq = Some(store.current_op_seq()?);
+        }
+        Ok(())
     }
 }

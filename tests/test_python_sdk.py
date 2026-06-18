@@ -323,6 +323,12 @@ def test_weighted_probability_transfer_over_sparse_edges() -> None:
     assert result[b] == 0.5
     assert result[c] == 0.125
 
+    graph.add_edge(a, c, "Q", properties={"probability": "0.9"})
+    filtered = graph.propagate({a: 1.0}, 2, edge_type="P")
+    assert filtered[a] == 1.0
+    assert filtered[b] == 0.5
+    assert filtered[c] == 0.125
+
     local = graph.local_propagate({a: 1.0}, radius=1, edge_type="P")
     assert local[a] == 1.0
     assert local[b] == 0.5

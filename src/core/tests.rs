@@ -1,5 +1,5 @@
 use super::*;
-use crate::models::{PropertyMap, PropertyValue};
+use crate::models::{NewEdgeRecord, NewNodeRecord, PropertyMap, PropertyValue};
 use std::collections::HashMap;
 use std::fs;
 
@@ -88,11 +88,21 @@ fn weighted_probability_propagation_uses_sparse_edges() {
         .unwrap();
 
     let result = graph
-        .propagate(&HashMap::from([(a, 1.0)]), 2, "probability", 1.0)
+        .propagate(&HashMap::from([(a, 1.0)]), 2, None, "probability", 1.0)
         .unwrap();
     assert_eq!(result.get(&a), Some(&1.0));
     assert_eq!(result.get(&b), Some(&0.5));
     assert_eq!(result.get(&c), Some(&0.125));
+
+    graph
+        .add_edge(a, c, "Q".to_string(), map([("probability", "0.9")]))
+        .unwrap();
+    let filtered = graph
+        .propagate(&HashMap::from([(a, 1.0)]), 2, Some("P"), "probability", 1.0)
+        .unwrap();
+    assert_eq!(filtered.get(&a), Some(&1.0));
+    assert_eq!(filtered.get(&b), Some(&0.5));
+    assert_eq!(filtered.get(&c), Some(&0.125));
 }
 
 #[test]
@@ -488,6 +498,112 @@ fn sqlite_graph_auto_compacts_large_delta_overlay() {
 }
 
 #[test]
+fn sqlite_rebuilds_when_segment_manifest_is_bad() {
+    let path = compacted_test_graph("tonggraph-bad-manifest");
+    fs::write(segment_manifest_path(&path), "bad manifest").unwrap();
+
+    let reopened = GraphCore::open(path.to_str().unwrap()).unwrap();
+    assert_eq!(reopened.neighbors(0, "out", Some("LINK")).unwrap(), vec![1]);
+    assert!(fs::read_to_string(segment_manifest_path(&path))
+        .unwrap()
+        .contains("version=tonggraph-segment-v1"));
+    cleanup_db(&path);
+}
+
+#[test]
+fn sqlite_rebuilds_when_segment_file_is_missing_or_corrupt() {
+    let missing_path = compacted_test_graph("tonggraph-missing-segment");
+    fs::remove_file(segment_file_path(&missing_path)).unwrap();
+    let reopened = GraphCore::open(missing_path.to_str().unwrap()).unwrap();
+    assert_eq!(reopened.neighbors(0, "out", Some("LINK")).unwrap(), vec![1]);
+    assert!(segment_file_path(&missing_path).exists());
+    cleanup_db(&missing_path);
+
+    let corrupt_path = compacted_test_graph("tonggraph-corrupt-segment");
+    fs::write(segment_file_path(&corrupt_path), b"not a segment").unwrap();
+    let reopened = GraphCore::open(corrupt_path.to_str().unwrap()).unwrap();
+    assert_eq!(reopened.neighbors(0, "out", Some("LINK")).unwrap(), vec![1]);
+    cleanup_db(&corrupt_path);
+}
+
+#[test]
+fn sqlite_stale_handle_requires_refresh_before_write() {
+    let path = temp_db_path("tonggraph-stale-handle");
+    let mut first = GraphCore::open(path.to_str().unwrap()).unwrap();
+    first
+        .add_node(Some("a".to_string()), Vec::new(), map([]))
+        .unwrap();
+
+    let mut second = GraphCore::open(path.to_str().unwrap()).unwrap();
+    second
+        .add_node(Some("b".to_string()), Vec::new(), map([]))
+        .unwrap();
+
+    let stale = first
+        .add_node(Some("c".to_string()), Vec::new(), map([]))
+        .unwrap_err();
+    assert!(stale.contains("call refresh() before writing"));
+    assert_eq!(first.get_node_id("b"), None);
+
+    first.refresh().unwrap();
+    assert_eq!(first.get_node_id("b"), Some(1));
+    assert_eq!(
+        first
+            .add_node(Some("c".to_string()), Vec::new(), map([]))
+            .unwrap(),
+        2
+    );
+    cleanup_db(&path);
+}
+
+#[test]
+fn bulk_add_nodes_edges_and_ordered_scans_work_in_core() {
+    let mut graph = GraphCore::new();
+    let nodes = graph
+        .add_nodes(vec![
+            NewNodeRecord {
+                external_id: Some("a".to_string()),
+                labels: vec!["Entity".to_string()],
+                properties: map([("rank", "1")]),
+            },
+            NewNodeRecord {
+                external_id: Some("b".to_string()),
+                labels: vec!["Entity".to_string()],
+                properties: map([("rank", "2")]),
+            },
+        ])
+        .unwrap();
+    assert_eq!(nodes, vec![0, 1]);
+    let edges = graph
+        .add_edges(vec![NewEdgeRecord {
+            source: nodes[0],
+            target: nodes[1],
+            edge_type: "LINK".to_string(),
+            properties: map([("probability", "0.5")]),
+        }])
+        .unwrap();
+    assert_eq!(edges, vec![0]);
+    assert_eq!(graph.node_ids(), vec![0, 1]);
+    assert_eq!(graph.edge_ids(), vec![0]);
+    assert_eq!(
+        graph
+            .nodes()
+            .into_iter()
+            .map(|node| node.id)
+            .collect::<Vec<_>>(),
+        vec![0, 1]
+    );
+    assert_eq!(
+        graph
+            .edges()
+            .into_iter()
+            .map(|edge| edge.id)
+            .collect::<Vec<_>>(),
+        vec![0]
+    );
+}
+
+#[test]
 fn belief_propagation_conditions_binary_chain_exactly() {
     let mut graph = GraphCore::new();
     let parent = graph
@@ -832,6 +948,26 @@ fn temp_db_path(name: &str) -> std::path::PathBuf {
 
 fn segment_manifest_path(path: &std::path::Path) -> std::path::PathBuf {
     std::path::PathBuf::from(format!("{}.segments", path.to_string_lossy())).join("manifest.txt")
+}
+
+fn segment_file_path(path: &std::path::Path) -> std::path::PathBuf {
+    std::path::PathBuf::from(format!("{}.segments", path.to_string_lossy())).join("segment-v1.bin")
+}
+
+fn compacted_test_graph(name: &str) -> std::path::PathBuf {
+    let path = temp_db_path(name);
+    {
+        let mut graph = GraphCore::open(path.to_str().unwrap()).unwrap();
+        let a = graph
+            .add_node(Some("a".to_string()), Vec::new(), map([]))
+            .unwrap();
+        let b = graph
+            .add_node(Some("b".to_string()), Vec::new(), map([]))
+            .unwrap();
+        graph.add_edge(a, b, "LINK".to_string(), map([])).unwrap();
+        graph.compact_segments().unwrap();
+    }
+    path
 }
 
 fn cleanup_db(path: &std::path::Path) {

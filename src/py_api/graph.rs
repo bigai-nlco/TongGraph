@@ -10,9 +10,10 @@ use super::records::{PyEdge, PyEvidence, PyFactor, PyNode, PyTrace, PyVariable};
 use super::snapshot::PyGraphSnapshot;
 use super::to_py_value_error;
 use crate::core::GraphCore;
-use pyo3::exceptions::{PyKeyError, PyRuntimeError};
+use crate::models::{NewEdgeRecord, NewNodeRecord};
+use pyo3::exceptions::{PyKeyError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyAny, PyDict};
+use pyo3::types::{PyAny, PyDict, PyList};
 use std::collections::HashMap;
 
 #[pyclass(name = "Graph", unsendable)]
@@ -88,6 +89,22 @@ impl PyGraph {
 
     fn trace_count(&self) -> usize {
         self.core.trace_count()
+    }
+
+    fn node_ids(&self) -> Vec<u64> {
+        self.core.node_ids()
+    }
+
+    fn edge_ids(&self) -> Vec<u64> {
+        self.core.edge_ids()
+    }
+
+    fn nodes(&self) -> Vec<PyNode> {
+        self.core.nodes().into_iter().map(PyNode::from).collect()
+    }
+
+    fn edges(&self) -> Vec<PyEdge> {
+        self.core.edges().into_iter().map(PyEdge::from).collect()
     }
 
     fn get_node(&self, node_id: u64) -> PyResult<PyNode> {
@@ -206,8 +223,22 @@ impl PyGraph {
         self.core.compact_segments().map_err(to_py_value_error)
     }
 
+    fn refresh(&mut self) -> PyResult<()> {
+        self.core.refresh().map_err(to_py_value_error)
+    }
+
     fn snapshot(&self) -> PyGraphSnapshot {
         PyGraphSnapshot::new(self.core.snapshot())
+    }
+
+    fn add_nodes(&mut self, records: &Bound<'_, PyAny>) -> PyResult<Vec<u64>> {
+        let records = new_node_records_from_py(records)?;
+        self.core.add_nodes(records).map_err(to_py_value_error)
+    }
+
+    fn add_edges(&mut self, records: &Bound<'_, PyAny>) -> PyResult<Vec<u64>> {
+        let records = new_edge_records_from_py(records)?;
+        self.core.add_edges(records).map_err(to_py_value_error)
     }
 
     #[pyo3(signature = (start, direction="out", edge_type=None, max_depth=None))]
@@ -311,16 +342,17 @@ impl PyGraph {
         query_schema_to_py(py)
     }
 
-    #[pyo3(signature = (seeds, steps, edge_property="probability", damping=1.0))]
+    #[pyo3(signature = (seeds, steps, edge_property="probability", damping=1.0, edge_type=None))]
     fn propagate(
         &self,
         seeds: HashMap<u64, f64>,
         steps: usize,
         edge_property: &str,
         damping: f64,
+        edge_type: Option<String>,
     ) -> PyResult<HashMap<u64, f64>> {
         self.core
-            .propagate(&seeds, steps, edge_property, damping)
+            .propagate(&seeds, steps, edge_type.as_deref(), edge_property, damping)
             .map_err(to_py_value_error)
     }
 
@@ -473,4 +505,132 @@ impl PyGraph {
             )
             .map_err(to_py_value_error)
     }
+}
+
+fn new_node_records_from_py(records: &Bound<'_, PyAny>) -> PyResult<Vec<NewNodeRecord>> {
+    let records = records
+        .cast::<PyList>()
+        .map_err(|_| PyValueError::new_err("add_nodes records must be a list"))?;
+    let mut parsed = Vec::with_capacity(records.len());
+    for (index, record) in records.iter().enumerate() {
+        let record = record
+            .cast::<PyDict>()
+            .map_err(|_| PyValueError::new_err(format!("node record {index} must be a dict")))?;
+        reject_unknown_record_fields(
+            record,
+            &format!("node record {index}"),
+            &["external_id", "labels", "properties"],
+        )?;
+        let properties = optional_dict(record, "properties")?;
+        parsed.push(NewNodeRecord {
+            external_id: optional_string(record, "external_id")?,
+            labels: optional_string_list(record, "labels")?.unwrap_or_default(),
+            properties: properties_from_py(properties.as_ref())?,
+        });
+    }
+    Ok(parsed)
+}
+
+fn new_edge_records_from_py(records: &Bound<'_, PyAny>) -> PyResult<Vec<NewEdgeRecord>> {
+    let records = records
+        .cast::<PyList>()
+        .map_err(|_| PyValueError::new_err("add_edges records must be a list"))?;
+    let mut parsed = Vec::with_capacity(records.len());
+    for (index, record) in records.iter().enumerate() {
+        let record = record
+            .cast::<PyDict>()
+            .map_err(|_| PyValueError::new_err(format!("edge record {index} must be a dict")))?;
+        reject_unknown_record_fields(
+            record,
+            &format!("edge record {index}"),
+            &["source", "target", "edge_type", "properties"],
+        )?;
+        let properties = optional_dict(record, "properties")?;
+        parsed.push(NewEdgeRecord {
+            source: required_u64(record, index, "source")?,
+            target: required_u64(record, index, "target")?,
+            edge_type: required_string(record, index, "edge_type")?,
+            properties: properties_from_py(properties.as_ref())?,
+        });
+    }
+    Ok(parsed)
+}
+
+fn reject_unknown_record_fields(
+    dict: &Bound<'_, PyDict>,
+    context: &str,
+    allowed: &[&str],
+) -> PyResult<()> {
+    for (key, _) in dict.iter() {
+        let key = key
+            .extract::<String>()
+            .map_err(|_| PyValueError::new_err(format!("{context} keys must be strings")))?;
+        if !allowed.contains(&key.as_str()) {
+            return Err(PyValueError::new_err(format!(
+                "{context} has unknown field {key:?}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn required_item<'py>(
+    dict: &Bound<'py, PyDict>,
+    index: usize,
+    key: &str,
+) -> PyResult<Bound<'py, PyAny>> {
+    dict.get_item(key)?
+        .filter(|value| !value.is_none())
+        .ok_or_else(|| PyValueError::new_err(format!("record {index} missing {key:?}")))
+}
+
+fn optional_item<'py>(dict: &Bound<'py, PyDict>, key: &str) -> PyResult<Option<Bound<'py, PyAny>>> {
+    Ok(dict.get_item(key)?.filter(|value| !value.is_none()))
+}
+
+fn required_string(dict: &Bound<'_, PyDict>, index: usize, key: &str) -> PyResult<String> {
+    required_item(dict, index, key)?.extract().map_err(|_| {
+        PyValueError::new_err(format!("record {index} field {key:?} must be a string"))
+    })
+}
+
+fn optional_string(dict: &Bound<'_, PyDict>, key: &str) -> PyResult<Option<String>> {
+    optional_item(dict, key)?
+        .map(|value| {
+            value.extract().map_err(|_| {
+                PyValueError::new_err(format!("optional record field {key:?} must be a string"))
+            })
+        })
+        .transpose()
+}
+
+fn optional_string_list(dict: &Bound<'_, PyDict>, key: &str) -> PyResult<Option<Vec<String>>> {
+    optional_item(dict, key)?
+        .map(|value| {
+            value.extract().map_err(|_| {
+                PyValueError::new_err(format!(
+                    "optional record field {key:?} must be a list of strings"
+                ))
+            })
+        })
+        .transpose()
+}
+
+fn required_u64(dict: &Bound<'_, PyDict>, index: usize, key: &str) -> PyResult<u64> {
+    required_item(dict, index, key)?
+        .extract()
+        .map_err(|_| PyValueError::new_err(format!("record {index} field {key:?} must be an int")))
+}
+
+fn optional_dict<'py>(
+    dict: &Bound<'py, PyDict>,
+    key: &str,
+) -> PyResult<Option<Bound<'py, PyDict>>> {
+    optional_item(dict, key)?
+        .map(|value| {
+            value.cast::<PyDict>().cloned().map_err(|_| {
+                PyValueError::new_err(format!("optional record field {key:?} must be a dict"))
+            })
+        })
+        .transpose()
 }

@@ -84,6 +84,11 @@ Edge patterns support:
 `return` is optional. When omitted, TongGraph returns every declared alias in
 pattern order. `limit` is optional and stops execution after that many rows.
 
+Query parsing is strict. Unknown top-level fields, node fields, edge fields, or
+filter fields raise an error instead of being ignored. This is intentional so
+LLM-compiled query specs fail fast when they hallucinate names such as `label`
+instead of `labels` or `edge_type` instead of `type`.
+
 ## Filters
 
 `properties` is shorthand for equality filters:

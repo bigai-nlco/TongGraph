@@ -23,6 +23,8 @@ pub(crate) struct BeliefPropagationResult {
     pub(crate) converged: bool,
     pub(crate) max_residual: f64,
     pub(crate) trace_id: Option<u64>,
+    pub(crate) warnings: Vec<String>,
+    pub(crate) diagnostics: BTreeMap<String, PropertyValue>,
 }
 
 #[derive(Clone)]
@@ -160,6 +162,7 @@ impl GraphCore {
         let query_variables = query_variables.unwrap_or(&[]);
         let active =
             self.compile_active_subgraph(query_variables, &evidence, radius, 10000, 50000)?;
+        let mut warnings = active_subgraph_warnings(&active);
         let active_variable_set = active.variables.iter().copied().collect::<BTreeSet<_>>();
         let active_factor_set = active.factors.iter().copied().collect::<BTreeSet<_>>();
 
@@ -227,6 +230,9 @@ impl GraphCore {
         } else {
             query_variables.to_vec()
         };
+        if persist {
+            self.ensure_store_current()?;
+        }
         let mut beliefs = BTreeMap::new();
         for variable_id in result_variables {
             if !active_variable_set.contains(&variable_id) {
@@ -239,6 +245,27 @@ impl GraphCore {
                 self.posteriors.insert(variable_id, belief);
             }
         }
+
+        if !converged {
+            warnings.push(format!(
+                "belief propagation did not converge within {max_iters} iterations"
+            ));
+        }
+        if max_iters > 0 && iterations.saturating_mul(10) >= max_iters.saturating_mul(9) {
+            warnings.push(format!(
+                "belief propagation used {iterations} of {max_iters} configured iterations"
+            ));
+        }
+        let diagnostics = belief_diagnostics(
+            &active,
+            iterations,
+            max_iters,
+            messages_updated,
+            converged,
+            max_residual,
+            tolerance,
+            damping,
+        );
 
         let mut trace_id = None;
         if persist {
@@ -265,6 +292,8 @@ impl GraphCore {
             converged,
             max_residual,
             trace_id,
+            warnings,
+            diagnostics,
         })
     }
 
@@ -780,5 +809,78 @@ fn trace_payload(
             "truncated".to_string(),
             PropertyValue::Bool(active.truncated),
         ),
+    ])
+}
+
+fn active_subgraph_warnings(active: &ActiveSubgraph) -> Vec<String> {
+    let mut warnings = Vec::new();
+    if active.truncated {
+        warnings
+            .push("active subgraph was truncated by max_nodes or max_factors limits".to_string());
+    }
+    if active.variables.len() > 1000
+        || active.factors.len() > 5000
+        || active.graph_nodes.len() > 5000
+    {
+        warnings.push(format!(
+            "large active subgraph: {} variables, {} factors, {} graph nodes",
+            active.variables.len(),
+            active.factors.len(),
+            active.graph_nodes.len()
+        ));
+    }
+    warnings
+}
+
+fn belief_diagnostics(
+    active: &ActiveSubgraph,
+    iterations: usize,
+    max_iters: usize,
+    messages_updated: usize,
+    converged: bool,
+    max_residual: f64,
+    tolerance: f64,
+    damping: f64,
+) -> BTreeMap<String, PropertyValue> {
+    BTreeMap::from([
+        (
+            "active_variables".to_string(),
+            PropertyValue::Int(active.variables.len() as i64),
+        ),
+        (
+            "active_factors".to_string(),
+            PropertyValue::Int(active.factors.len() as i64),
+        ),
+        (
+            "active_graph_nodes".to_string(),
+            PropertyValue::Int(active.graph_nodes.len() as i64),
+        ),
+        (
+            "boundary_variables".to_string(),
+            PropertyValue::Int(active.boundary_variables.len() as i64),
+        ),
+        (
+            "truncated".to_string(),
+            PropertyValue::Bool(active.truncated),
+        ),
+        (
+            "iterations".to_string(),
+            PropertyValue::Int(iterations as i64),
+        ),
+        (
+            "max_iters".to_string(),
+            PropertyValue::Int(max_iters as i64),
+        ),
+        (
+            "messages_updated".to_string(),
+            PropertyValue::Int(messages_updated as i64),
+        ),
+        ("converged".to_string(), PropertyValue::Bool(converged)),
+        (
+            "max_residual".to_string(),
+            PropertyValue::Float(max_residual),
+        ),
+        ("tolerance".to_string(), PropertyValue::Float(tolerance)),
+        ("damping".to_string(), PropertyValue::Float(damping)),
     ])
 }

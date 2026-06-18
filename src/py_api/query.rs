@@ -11,6 +11,7 @@ pub(super) fn query_spec_from_py(spec: &Bound<'_, PyAny>) -> PyResult<QuerySpec>
     let spec = spec
         .cast::<PyDict>()
         .map_err(|_| PyValueError::new_err("query spec must be a dict"))?;
+    reject_unknown_fields(spec, "query spec", &["match", "return", "limit"])?;
     let match_value = required_item(spec, "match")?;
     let match_items = match_value
         .cast::<PyList>()
@@ -71,10 +72,15 @@ pub(super) fn query_schema_to_py(py: Python<'_>) -> PyResult<Py<PyAny>> {
         ["eq", "ne", "lt", "lte", "gt", "gte", "in", "contains"],
     )?;
     schema.set_item("directions", ["out", "in", "both"])?;
+    schema.set_item("top_level_fields", ["match", "return", "limit"])?;
     schema.set_item("return", "optional list of node or edge aliases")?;
     schema.set_item("limit", "optional non-negative integer row limit")?;
 
     let node = PyDict::new(py);
+    node.set_item(
+        "allowed_fields",
+        ["node", "id", "external_id", "labels", "properties", "where"],
+    )?;
     node.set_item("node", "required alias string")?;
     node.set_item("id", "optional internal node id")?;
     node.set_item("external_id", "optional external node id")?;
@@ -84,6 +90,10 @@ pub(super) fn query_schema_to_py(py: Python<'_>) -> PyResult<Py<PyAny>> {
     schema.set_item("node_pattern", node)?;
 
     let edge = PyDict::new(py);
+    edge.set_item(
+        "allowed_fields",
+        ["edge", "id", "type", "direction", "properties", "where"],
+    )?;
     edge.set_item("edge", "optional alias string")?;
     edge.set_item("id", "optional internal edge id")?;
     edge.set_item("type", "optional edge type")?;
@@ -96,6 +106,7 @@ pub(super) fn query_schema_to_py(py: Python<'_>) -> PyResult<Py<PyAny>> {
     schema.set_item("edge_pattern", edge)?;
 
     let filter = PyDict::new(py);
+    filter.set_item("allowed_fields", ["property", "op", "value"])?;
     filter.set_item("property", "required property key")?;
     filter.set_item("op", "optional operator, defaults to eq")?;
     filter.set_item("value", "scalar value, or list when op is in")?;
@@ -110,6 +121,11 @@ pub(crate) fn py_query_dsl_schema(py: Python<'_>) -> PyResult<Py<PyAny>> {
 
 fn node_pattern_from_py(item: &Bound<'_, PyDict>, index: usize) -> PyResult<NodePattern> {
     reject_unexpected_field(item, index, "edge", "a node")?;
+    reject_unknown_fields(
+        item,
+        &format!("match element {index}"),
+        &["node", "id", "external_id", "labels", "properties", "where"],
+    )?;
     let alias = required_string(item, index, "node")?;
     Ok(NodePattern {
         alias,
@@ -122,6 +138,11 @@ fn node_pattern_from_py(item: &Bound<'_, PyDict>, index: usize) -> PyResult<Node
 
 fn edge_pattern_from_py(item: &Bound<'_, PyDict>, index: usize) -> PyResult<EdgePattern> {
     reject_unexpected_field(item, index, "node", "an edge")?;
+    reject_unknown_fields(
+        item,
+        &format!("match element {index}"),
+        &["edge", "id", "type", "direction", "properties", "where"],
+    )?;
     let direction = optional_string(item, "direction")?.unwrap_or_else(|| "out".to_string());
     let direction = QueryDirection::parse(&direction).map_err(PyValueError::new_err)?;
     Ok(EdgePattern {
@@ -168,6 +189,11 @@ fn property_constraints_from_py(item: &Bound<'_, PyDict>) -> PyResult<Vec<Proper
         let filter = filter
             .cast::<PyDict>()
             .map_err(|_| PyValueError::new_err(format!("where filter {index} must be a dict")))?;
+        reject_unknown_fields(
+            filter,
+            &format!("where filter {index}"),
+            &["property", "op", "value"],
+        )?;
         let key = required_string(filter, index, "property")?;
         let op = optional_string(filter, "op")?.unwrap_or_else(|| "eq".to_string());
         let op = PropertyOperator::parse(&op).map_err(PyValueError::new_err)?;
@@ -189,6 +215,24 @@ fn property_constraints_from_py(item: &Bound<'_, PyDict>) -> PyResult<Vec<Proper
     }
 
     Ok(constraints)
+}
+
+fn reject_unknown_fields(
+    dict: &Bound<'_, PyDict>,
+    context: &str,
+    allowed: &[&str],
+) -> PyResult<()> {
+    for (key, _) in dict.iter() {
+        let key = key
+            .extract::<String>()
+            .map_err(|_| PyValueError::new_err(format!("{context} keys must be strings")))?;
+        if !allowed.contains(&key.as_str()) {
+            return Err(PyValueError::new_err(format!(
+                "{context} has unknown field {key:?}"
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn required_item<'py>(dict: &Bound<'py, PyDict>, key: &str) -> PyResult<Bound<'py, PyAny>> {

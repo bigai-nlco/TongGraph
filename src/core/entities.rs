@@ -1,6 +1,7 @@
 use super::properties::{index_properties, validate_non_empty, validate_properties};
 use super::GraphCore;
-use crate::models::{EdgeRecord, NodeRecord, PropertyMap};
+use crate::models::{EdgeRecord, NewEdgeRecord, NewNodeRecord, NodeRecord, PropertyMap};
+use std::collections::BTreeSet;
 
 impl GraphCore {
     pub(crate) fn add_node(
@@ -9,30 +10,12 @@ impl GraphCore {
         labels: Vec<String>,
         properties: PropertyMap,
     ) -> Result<u64, String> {
-        for label in &labels {
-            validate_non_empty("label", label)?;
-        }
-        validate_properties(&properties)?;
-
-        let id = self.next_node_id;
-        let external_id = external_id.unwrap_or_else(|| format!("node:{id}"));
-        validate_non_empty("external_id", &external_id)?;
-        if self.node_by_external_id.contains_key(&external_id) {
-            return Err(format!("external_id {external_id:?} already exists"));
-        }
-
-        let record = NodeRecord {
-            id,
+        let ids = self.add_nodes(vec![NewNodeRecord {
             external_id,
             labels,
             properties,
-        };
-
-        if let Some(store) = &self.store {
-            store.insert_node(&record)?;
-        }
-        self.insert_node_record(record)?;
-        Ok(id)
+        }])?;
+        Ok(ids[0])
     }
 
     pub(crate) fn add_edge(
@@ -42,26 +25,85 @@ impl GraphCore {
         edge_type: String,
         properties: PropertyMap,
     ) -> Result<u64, String> {
-        validate_non_empty("edge_type", &edge_type)?;
-        validate_properties(&properties)?;
-        self.require_node(source)?;
-        self.require_node(target)?;
-
-        let id = self.next_edge_id;
-        let record = EdgeRecord {
-            id,
+        let ids = self.add_edges(vec![NewEdgeRecord {
             source,
             target,
             edge_type,
             properties,
-        };
+        }])?;
+        Ok(ids[0])
+    }
 
-        if let Some(store) = &self.store {
-            store.insert_edge(&record)?;
+    pub(crate) fn add_nodes(&mut self, nodes: Vec<NewNodeRecord>) -> Result<Vec<u64>, String> {
+        let mut external_ids = BTreeSet::new();
+        let mut records = Vec::with_capacity(nodes.len());
+        for (offset, node) in nodes.into_iter().enumerate() {
+            for label in &node.labels {
+                validate_non_empty("label", label)?;
+            }
+            validate_properties(&node.properties)?;
+            let id = self
+                .next_node_id
+                .checked_add(offset as u64)
+                .ok_or_else(|| "node id overflows".to_string())?;
+            let external_id = node.external_id.unwrap_or_else(|| format!("node:{id}"));
+            validate_non_empty("external_id", &external_id)?;
+            if self.node_by_external_id.contains_key(&external_id)
+                || !external_ids.insert(external_id.clone())
+            {
+                return Err(format!("external_id {external_id:?} already exists"));
+            }
+            records.push(NodeRecord {
+                id,
+                external_id,
+                labels: node.labels,
+                properties: node.properties,
+            });
         }
-        self.insert_edge_record(record)?;
+
+        if self.store.is_some() {
+            self.ensure_store_current()?;
+            self.store.as_ref().unwrap().insert_nodes(&records)?;
+            self.refresh_store_op_seq()?;
+        }
+        let ids = records.iter().map(|record| record.id).collect::<Vec<_>>();
+        for record in records {
+            self.insert_node_record(record)?;
+        }
+        Ok(ids)
+    }
+
+    pub(crate) fn add_edges(&mut self, edges: Vec<NewEdgeRecord>) -> Result<Vec<u64>, String> {
+        let mut records = Vec::with_capacity(edges.len());
+        for (offset, edge) in edges.into_iter().enumerate() {
+            validate_non_empty("edge_type", &edge.edge_type)?;
+            validate_properties(&edge.properties)?;
+            self.require_node(edge.source)?;
+            self.require_node(edge.target)?;
+            let id = self
+                .next_edge_id
+                .checked_add(offset as u64)
+                .ok_or_else(|| "edge id overflows".to_string())?;
+            records.push(EdgeRecord {
+                id,
+                source: edge.source,
+                target: edge.target,
+                edge_type: edge.edge_type,
+                properties: edge.properties,
+            });
+        }
+
+        if self.store.is_some() {
+            self.ensure_store_current()?;
+            self.store.as_ref().unwrap().insert_edges(&records)?;
+            self.refresh_store_op_seq()?;
+        }
+        let ids = records.iter().map(|record| record.id).collect::<Vec<_>>();
+        for record in records {
+            self.insert_edge_record(record)?;
+        }
         self.maybe_auto_compact_segments()?;
-        Ok(id)
+        Ok(ids)
     }
 
     pub(super) fn insert_loaded_node(&mut self, record: NodeRecord) -> Result<(), String> {

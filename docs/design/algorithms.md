@@ -105,8 +105,9 @@ outgoing edges:
 p_{t+1}(v) = \sum_{u \rightarrow v} p_t(u) \cdot w(u,v) \cdot \gamma
 \]
 
-where `edge_property` supplies \(w\) and `damping` supplies \(\gamma\). Results
-accumulate seed and transferred mass across steps.
+where `edge_property` supplies \(w\), `edge_type` can restrict traversal to one
+edge type, and `damping` supplies \(\gamma\). Results accumulate seed and
+transferred mass across steps.
 
 [`local_propagate`](../api/graph.md#tonggraph.Graph.local_propagate) first compiles a
 radius-limited active node set and only transfers mass inside that set.

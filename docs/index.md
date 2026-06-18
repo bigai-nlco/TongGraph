@@ -127,7 +127,7 @@ TongGraph keeps three ideas separate:
 - Start with [Quickstart](quickstart.md) for installation and first graph.
 - Read [Core Concepts](core-concepts.md) for storage, architecture, data model,
   scope, and probabilistic model.
-- Use [Examples](examples.md) for expected behavior and live outputs.
+- Use [Examples](examples/index.md) for expected behavior and live outputs.
 - Use [API](api/index.md) when you need method signatures.
 - Read [Algorithms](design/algorithms.md),
   [Query Layer](design/query-layer.md), and

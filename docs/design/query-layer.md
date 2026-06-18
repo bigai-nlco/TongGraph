@@ -1,6 +1,6 @@
 # Query Layer
 
-TongGraph v0.5 adds a small structured query layer for local graph retrieval.
+TongGraph adds a small structured query layer for local graph retrieval.
 It is intentionally not a Cypher implementation. The first query surface is a
 Python dictionary DSL that maps directly to a single connected path pattern and
 executes inside the Rust core.
@@ -139,7 +139,7 @@ cycle = {
 }
 ```
 
-The v0.5 engine covers one connected path pattern. It does not yet implement
+The engine covers one connected path pattern. It does not yet implement
 multi-pattern joins, optional matches, aggregation, sorting, full-text lookup,
 vector retrieval, or a Cypher parser.
 

@@ -143,7 +143,7 @@ semantics.
 
 ## Query Model
 
-The v0.5 query layer matches one connected path pattern over the property graph.
+The query layer matches one connected path pattern over the property graph.
 A query is a structured dictionary rather than a string language:
 
 ```python

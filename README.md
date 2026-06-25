@@ -97,6 +97,52 @@ uv run python scripts/benchmark_belief_propagation.py --nodes 1000 --degree 4 --
 
 ## Development
 
+Before setting up the repository, install:
+
+- Python 3.10 or newer
+- [uv](https://docs.astral.sh/uv/getting-started/installation/) for the Python
+  environment and Python dependencies
+- A stable Rust toolchain, including `rustc` and `cargo`, preferably installed
+  with [rustup](https://rustup.rs/)
+- A C/C++ build toolchain and the SQLite development library
+
+On Ubuntu or Debian, install the native build dependencies with:
+
+```bash
+sudo apt update
+sudo apt install -y build-essential libsqlite3-dev
+```
+
+On macOS, install the Xcode command-line tools. SQLite is normally provided by
+the operating system:
+
+```bash
+xcode-select --install
+```
+
+On Windows, install Rust with the MSVC toolchain, the Visual Studio C++ Build
+Tools, and SQLite development libraries that are visible to the linker.
+Alternatively, use WSL and follow the Ubuntu instructions above.
+
+For Linux, macOS, or WSL, install Rust through `rustup` with:
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env"
+```
+
+Verify the required tools before continuing:
+
+```bash
+python --version
+uv --version
+rustc --version
+cargo --version
+```
+
+`uv` manages the Python virtual environment and Python packages. It does not
+install the Rust toolchain, compiler toolchain, or SQLite development library.
+
 Install development dependencies and build the local extension in place:
 
 ```bash

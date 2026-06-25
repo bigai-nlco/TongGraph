@@ -25,7 +25,19 @@ TongGraph is a lightweight embedded graph compute database for Python applicatio
 
 ## Getting Started
 
-Use the source tree during development:
+Install tonggraph with [uv](https://docs.astral.sh/uv/) (recommended):
+
+```bash
+uv add tonggraph
+```
+
+or pip:
+
+```bash
+pip install tonggraph
+```
+
+For local development, run:
 
 ```bash
 git clone https://github.com/bigai-nlco/TongGraph.git
@@ -85,9 +97,16 @@ uv run python scripts/benchmark_belief_propagation.py --nodes 1000 --degree 4 --
 
 ## Development
 
+Install development dependencies and build the local extension in place:
+
 ```bash
 uv sync --dev
 uv run python scripts/build_python_extension.py
+```
+
+Run the test and documentation checks:
+
+```bash
 uv run pytest
 uv run mkdocs build --strict
 ```

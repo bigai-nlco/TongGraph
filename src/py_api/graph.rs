@@ -75,6 +75,63 @@ impl PyGraph {
             .map_err(to_py_value_error)
     }
 
+    #[pyo3(signature = (node_id, *, external_id=None, add_labels=None, remove_labels=None, set_properties=None, remove_properties=None))]
+    fn update_node(
+        &mut self,
+        node_id: u64,
+        external_id: Option<String>,
+        add_labels: Option<Vec<String>>,
+        remove_labels: Option<Vec<String>>,
+        set_properties: Option<&Bound<'_, PyDict>>,
+        remove_properties: Option<Vec<String>>,
+    ) -> PyResult<PyNode> {
+        self.core
+            .borrow_mut()
+            .update_node(
+                node_id,
+                external_id,
+                add_labels.unwrap_or_default(),
+                remove_labels.unwrap_or_default(),
+                properties_from_py(set_properties)?,
+                remove_properties.unwrap_or_default(),
+            )
+            .map(PyNode::from)
+            .map_err(to_py_value_error)
+    }
+
+    #[pyo3(signature = (edge_id, *, set_properties=None, remove_properties=None))]
+    fn update_edge(
+        &mut self,
+        edge_id: u64,
+        set_properties: Option<&Bound<'_, PyDict>>,
+        remove_properties: Option<Vec<String>>,
+    ) -> PyResult<PyEdge> {
+        self.core
+            .borrow_mut()
+            .update_edge(
+                edge_id,
+                properties_from_py(set_properties)?,
+                remove_properties.unwrap_or_default(),
+            )
+            .map(PyEdge::from)
+            .map_err(to_py_value_error)
+    }
+
+    #[pyo3(signature = (node_id, *, detach=false))]
+    fn delete_node(&mut self, node_id: u64, detach: bool) -> PyResult<()> {
+        self.core
+            .borrow_mut()
+            .delete_node(node_id, detach)
+            .map_err(to_py_value_error)
+    }
+
+    fn delete_edge(&mut self, edge_id: u64) -> PyResult<()> {
+        self.core
+            .borrow_mut()
+            .delete_edge(edge_id)
+            .map_err(to_py_value_error)
+    }
+
     fn node_count(&self) -> usize {
         self.core.borrow().node_count()
     }

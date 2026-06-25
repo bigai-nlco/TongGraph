@@ -61,8 +61,7 @@ impl From<CypherResult> for PyCypherResult {
 pub(crate) struct PyGraphTransaction {
     parent: Rc<RefCell<GraphCore>>,
     staged: GraphCore,
-    base_next_node_id: u64,
-    base_next_edge_id: u64,
+    base_version: u64,
     write: bool,
     active: bool,
 }
@@ -90,11 +89,7 @@ impl PyGraphTransaction {
         if self.write {
             self.parent
                 .borrow_mut()
-                .commit_transaction_snapshot(
-                    &self.staged,
-                    self.base_next_node_id,
-                    self.base_next_edge_id,
-                )
+                .commit_transaction_snapshot(&self.staged, self.base_version)
                 .map_err(to_py_value_error)?;
         }
         self.active = false;
@@ -129,15 +124,14 @@ impl PyGraphTransaction {
 
 impl PyGraphTransaction {
     pub(super) fn new(parent: Rc<RefCell<GraphCore>>, write: bool) -> Self {
-        let (staged, base_next_node_id, base_next_edge_id) = {
+        let (staged, base_version) = {
             let core = parent.borrow();
             core.transaction_snapshot()
         };
         Self {
             parent,
             staged,
-            base_next_node_id,
-            base_next_edge_id,
+            base_version,
             write,
             active: true,
         }
@@ -232,6 +226,11 @@ fn summary_to_py(py: Python<'_>, summary: &CypherSummary) -> PyResult<Py<PyAny>>
     dict.set_item("nodes_created", summary.nodes_created)?;
     dict.set_item("relationships_created", summary.relationships_created)?;
     dict.set_item("properties_set", summary.properties_set)?;
+    dict.set_item("properties_removed", summary.properties_removed)?;
+    dict.set_item("labels_added", summary.labels_added)?;
+    dict.set_item("labels_removed", summary.labels_removed)?;
+    dict.set_item("nodes_deleted", summary.nodes_deleted)?;
+    dict.set_item("relationships_deleted", summary.relationships_deleted)?;
     dict.set_item("rows", summary.rows)?;
     Ok(dict.into_any().unbind())
 }

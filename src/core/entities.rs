@@ -70,6 +70,9 @@ impl GraphCore {
         for record in records {
             self.insert_node_record(record)?;
         }
+        if !ids.is_empty() {
+            self.mutation_version = self.mutation_version.wrapping_add(1);
+        }
         Ok(ids)
     }
 
@@ -103,6 +106,9 @@ impl GraphCore {
             self.insert_edge_record(record)?;
         }
         self.maybe_auto_compact_segments()?;
+        if !ids.is_empty() {
+            self.mutation_version = self.mutation_version.wrapping_add(1);
+        }
         Ok(ids)
     }
 

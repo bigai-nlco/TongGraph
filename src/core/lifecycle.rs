@@ -31,6 +31,7 @@ impl GraphCore {
             next_trace_id: 0,
             store: None,
             store_op_seq: None,
+            mutation_version: 0,
         }
     }
 
@@ -72,6 +73,13 @@ impl GraphCore {
         for trace in store.load_traces()? {
             core.insert_loaded_trace(trace)?;
         }
+        let (next_node_id, next_edge_id) = store.load_next_ids()?;
+        if let Some(next_node_id) = next_node_id {
+            core.next_node_id = core.next_node_id.max(next_node_id);
+        }
+        if let Some(next_edge_id) = next_edge_id {
+            core.next_edge_id = core.next_edge_id.max(next_edge_id);
+        }
         core.store_op_seq = Some(store.current_op_seq()?);
         core.store = Some(store);
         Ok(core)
@@ -107,7 +115,7 @@ impl GraphCore {
         Ok(())
     }
 
-    fn rebuild_compacted_segment(&mut self) {
+    pub(super) fn rebuild_compacted_segment(&mut self) {
         let node_count = self.nodes.len();
         let mut out_adj = vec![Vec::new(); node_count];
         let mut in_adj = vec![Vec::new(); node_count];
@@ -166,61 +174,47 @@ impl GraphCore {
             next_trace_id: self.next_trace_id,
             store: None,
             store_op_seq: None,
+            mutation_version: self.mutation_version,
         }
     }
 
-    pub(crate) fn transaction_snapshot(&self) -> (Self, u64, u64) {
-        (self.snapshot(), self.next_node_id, self.next_edge_id)
+    pub(crate) fn transaction_snapshot(&self) -> (Self, u64) {
+        (self.snapshot(), self.mutation_version)
     }
 
     pub(crate) fn commit_transaction_snapshot(
         &mut self,
         staged: &Self,
-        base_next_node_id: u64,
-        base_next_edge_id: u64,
+        base_version: u64,
     ) -> Result<(), String> {
-        if self.next_node_id != base_next_node_id || self.next_edge_id != base_next_edge_id {
+        if self.mutation_version != base_version {
             return Err(
                 "graph changed since transaction started; rollback and retry the transaction"
                     .to_string(),
             );
         }
 
-        let nodes = staged
-            .nodes
-            .iter()
-            .flatten()
-            .filter(|node| node.id >= base_next_node_id)
-            .cloned()
-            .collect::<Vec<_>>();
-        let edges = staged
-            .edges
-            .iter()
-            .flatten()
-            .filter(|edge| edge.id >= base_next_edge_id)
-            .cloned()
-            .collect::<Vec<_>>();
-
-        if nodes.is_empty() && edges.is_empty() {
+        let changes = self.graph_changes(staged);
+        if changes.is_empty() {
             return Ok(());
         }
 
-        if self.store.is_some() {
+        let mut published = staged.snapshot();
+        published.rebuild_derived_state();
+        if let Some(store) = &self.store {
             self.ensure_store_current()?;
-            self.store
-                .as_ref()
-                .unwrap()
-                .insert_graph_records(&nodes, &edges)?;
+            store.apply_graph_changes(&changes)?;
+            let _ = store.save_segment(
+                &published.base_segment,
+                published.nodes.len(),
+                published.edge_count(),
+            );
+        }
+        self.publish_staged(&published, base_version.wrapping_add(1));
+        if self.store.is_some() {
             self.refresh_store_op_seq()?;
         }
-
-        for node in nodes {
-            self.insert_node_record(node)?;
-        }
-        for edge in edges {
-            self.insert_edge_record(edge)?;
-        }
-        self.maybe_auto_compact_segments()
+        Ok(())
     }
 
     pub(super) fn ensure_store_current(&self) -> Result<(), String> {

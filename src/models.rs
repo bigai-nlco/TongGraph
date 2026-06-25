@@ -54,7 +54,7 @@ pub(crate) struct NewEdgeRecord {
     pub(crate) properties: PropertyMap,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct NodeRecord {
     pub(crate) id: u64,
     pub(crate) external_id: String,
@@ -62,13 +62,34 @@ pub(crate) struct NodeRecord {
     pub(crate) properties: PropertyMap,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct EdgeRecord {
     pub(crate) id: u64,
     pub(crate) source: u64,
     pub(crate) target: u64,
     pub(crate) edge_type: String,
     pub(crate) properties: PropertyMap,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct GraphChanges {
+    pub(crate) upsert_nodes: Vec<NodeRecord>,
+    pub(crate) upsert_edges: Vec<EdgeRecord>,
+    pub(crate) delete_node_ids: Vec<u64>,
+    pub(crate) delete_edge_ids: Vec<u64>,
+    pub(crate) next_node_id: u64,
+    pub(crate) next_edge_id: u64,
+    pub(crate) counters_changed: bool,
+}
+
+impl GraphChanges {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.upsert_nodes.is_empty()
+            && self.upsert_edges.is_empty()
+            && self.delete_node_ids.is_empty()
+            && self.delete_edge_ids.is_empty()
+            && !self.counters_changed
+    }
 }
 
 #[derive(Clone, Debug)]

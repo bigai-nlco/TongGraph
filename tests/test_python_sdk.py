@@ -340,6 +340,108 @@ def test_cypher_api_create_match_snapshot_transaction_and_reopen(tmp_path: Path)
     assert reopened_rows.records == [{"name": "Carol"}, {"name": "Bob"}]
 
 
+def test_graph_crud_sdk_and_cypher_persist_transactionally(tmp_path: Path) -> None:
+    db_path = tmp_path / "crud.db"
+    graph = Graph(str(db_path))
+    alice = graph.add_node(
+        "alice",
+        labels=["Person"],
+        properties={"name": "Alice", "obsolete": True},
+    )
+    bob = graph.add_node("bob", labels=["Person"])
+    edge = graph.add_edge(alice, bob, "KNOWS", properties={"old": "yes"})
+
+    updated = graph.update_node(
+        alice,
+        external_id="alice-2",
+        add_labels=["Researcher"],
+        remove_labels=["Person"],
+        set_properties={"rank": 2},
+        remove_properties=["obsolete"],
+    )
+    assert updated.external_id == "alice-2"
+    assert updated.labels == ["Researcher"]
+    assert updated.properties == {"name": "Alice", "rank": 2}
+    assert graph.get_node_id("alice") is None
+    assert graph.get_node_id("alice-2") == alice
+
+    updated_edge = graph.update_edge(
+        edge,
+        set_properties={"weight": 0.75},
+        remove_properties=["old"],
+    )
+    assert updated_edge.properties == {"weight": 0.75}
+    with pytest.raises(ValueError, match="relationships"):
+        graph.delete_node(alice)
+
+    with graph.transaction() as tx:
+        staged = tx.run(
+            "MATCH (a {external_id: 'alice-2'})-[r:KNOWS]->(b) "
+            "SET a.name = 'Alicia', a += {active: true}, r.weight = 0.8 "
+            "REMOVE a.rank RETURN a.name AS name, r.weight AS weight"
+        )
+        assert staged.records == [{"name": "Alicia", "weight": 0.8}]
+        assert staged.summary["properties_set"] == 3
+        assert staged.summary["properties_removed"] == 1
+        assert graph.get_node(alice).properties["name"] == "Alice"
+    assert graph.get_node(alice).properties == {"name": "Alicia", "active": True}
+
+    with graph.transaction() as tx:
+        tx.run("MATCH (b {external_id: 'bob'}) DETACH DELETE b")
+        tx.rollback()
+    assert graph.get_node_id("bob") == bob
+
+    deleted = graph.cypher(
+        "MATCH (a {external_id: 'alice-2'})-[r:KNOWS]->(b) DELETE r, b"
+    )
+    assert deleted.summary["nodes_deleted"] == 1
+    assert deleted.summary["relationships_deleted"] == 1
+    assert graph.edge_count() == 0
+    assert graph.node_count() == 1
+
+    del graph
+    reopened = Graph(str(db_path))
+    assert reopened.get_node_id("alice-2") == alice
+    assert reopened.get_node(alice).properties == {"name": "Alicia", "active": True}
+    assert reopened.nodes_with_label("Researcher") == [alice]
+    assert reopened.edge_count() == 0
+    reopened.delete_node(alice)
+    assert reopened.node_count() == 0
+
+
+def test_failed_sqlite_graph_change_preserves_existing_segment(tmp_path: Path) -> None:
+    db_path = tmp_path / "atomic-segment.db"
+    graph = Graph(str(db_path))
+    node = graph.add_node("node", properties={"value": 1})
+    target = graph.add_node("target")
+    graph.add_edge(node, target, "LINK")
+    graph.compact()
+    manifest = Path(f"{db_path}.segments") / "manifest.txt"
+    segment = Path(f"{db_path}.segments") / "segment-v1.bin"
+    assert manifest.exists()
+    assert segment.exists()
+
+    with connect(db_path) as connection:
+        connection.execute(
+            "CREATE TRIGGER fail_node_update BEFORE UPDATE ON nodes "
+            "BEGIN SELECT RAISE(ABORT, 'forced failure'); END"
+        )
+
+    with pytest.raises(ValueError, match="forced failure"):
+        graph.cypher(
+            "MATCH (n {external_id: 'node'}) SET n.value = 2 RETURN n.value"
+        )
+
+    assert manifest.exists()
+    assert segment.exists()
+    assert graph.get_node(node).properties["value"] == 1
+    with connect(db_path) as connection:
+        stored = connection.execute(
+            "SELECT properties FROM nodes WHERE id = ?", (node,)
+        ).fetchone()
+    assert stored == ("value\tint\t1",)
+
+
 def test_graph_compute_runtime_algorithms_and_batch() -> None:
     graph = Graph()
     a = graph.add_node("a")
@@ -824,6 +926,23 @@ def test_sqlite_stale_handle_requires_refresh(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="SQLite-backed"):
         Graph().refresh()
+
+
+def test_sqlite_counter_only_transaction_invalidates_stale_handles(tmp_path: Path) -> None:
+    db_path = tmp_path / "counter_only.db"
+    graph = Graph(str(db_path))
+    stale = Graph(str(db_path))
+
+    with graph.transaction() as tx:
+        tx.run("CREATE (n {external_id: 'transient'})")
+        tx.run("MATCH (n {external_id: 'transient'}) DELETE n")
+
+    assert graph.node_count() == 0
+    with pytest.raises(ValueError, match="call refresh\\(\\) before writing"):
+        stale.add_node("real")
+
+    stale.refresh()
+    assert stale.add_node("real") == 1
 
 
 def test_bulk_ingest_scans_reopen_and_rollback(tmp_path: Path) -> None:

@@ -1,7 +1,7 @@
 use crate::core::GraphCore;
 use crate::models::{EdgeRecord, NodeRecord, PropertyMap, PropertyValue};
 use std::cmp::Ordering;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub(crate) type CypherParams = BTreeMap<String, CypherValue>;
 
@@ -18,6 +18,11 @@ pub(crate) struct CypherSummary {
     pub(crate) nodes_created: usize,
     pub(crate) relationships_created: usize,
     pub(crate) properties_set: usize,
+    pub(crate) properties_removed: usize,
+    pub(crate) labels_added: usize,
+    pub(crate) labels_removed: usize,
+    pub(crate) nodes_deleted: usize,
+    pub(crate) relationships_deleted: usize,
     pub(crate) rows: usize,
 }
 
@@ -58,7 +63,44 @@ struct MatchQuery {
     optional: bool,
     pattern: Pattern,
     where_terms: Vec<Predicate>,
-    projection: Projection,
+    action: MatchAction,
+}
+
+#[derive(Clone, Debug)]
+enum MatchAction {
+    Return(Projection),
+    Update {
+        set_items: Vec<SetItem>,
+        remove_items: Vec<RemoveItem>,
+        projection: Option<Projection>,
+    },
+    Delete {
+        detach: bool,
+        variables: Vec<String>,
+    },
+}
+
+#[derive(Clone, Debug)]
+enum SetItem {
+    Property {
+        var: String,
+        key: String,
+        value: Expr,
+    },
+    MergeMap {
+        var: String,
+        value: Expr,
+    },
+    Labels {
+        var: String,
+        labels: Vec<String>,
+    },
+}
+
+#[derive(Clone, Debug)]
+enum RemoveItem {
+    Property { var: String, key: String },
+    Labels { var: String, labels: Vec<String> },
 }
 
 #[derive(Clone, Debug)]
@@ -138,6 +180,7 @@ enum PredicateOp {
 enum Expr {
     Literal(CypherValue),
     List(Vec<Expr>),
+    Map(Vec<(String, Expr)>),
     Parameter(String),
     Var(String),
     Property(String, String),
@@ -166,9 +209,9 @@ pub(crate) fn execute_autocommit(
 ) -> Result<CypherResult, String> {
     let query = parse_query(query)?;
     if query.is_write() {
-        let (mut staged, base_next_node_id, base_next_edge_id) = core.transaction_snapshot();
+        let (mut staged, base_version) = core.transaction_snapshot();
         let result = execute_query(&mut staged, &query, params, true)?;
-        core.commit_transaction_snapshot(&staged, base_next_node_id, base_next_edge_id)?;
+        core.commit_transaction_snapshot(&staged, base_version)?;
         Ok(result)
     } else {
         execute_readonly(core, &query, params)
@@ -201,8 +244,9 @@ impl Query {
     fn is_write(&self) -> bool {
         match &self.statement {
             Statement::Create(_) | Statement::Merge(_) => true,
+            Statement::Match(query) => !matches!(query.action, MatchAction::Return(_)),
             Statement::Union(queries) => queries.iter().any(Query::is_write),
-            Statement::Return(_) | Statement::Match(_) => false,
+            Statement::Return(_) => false,
         }
     }
 }
@@ -224,7 +268,12 @@ fn execute_query(
 ) -> Result<CypherResult, String> {
     match &query.statement {
         Statement::Return(query) => execute_return(core, query, params),
-        Statement::Match(query) => execute_match(core, query, params),
+        Statement::Match(query) => {
+            if !matches!(query.action, MatchAction::Return(_)) && !write_allowed {
+                return Err("write query requires a writable Graph transaction".to_string());
+            }
+            execute_match(core, query, params)
+        }
         Statement::Create(query) => {
             if !write_allowed {
                 return Err("write query requires a writable Graph transaction".to_string());
@@ -285,10 +334,11 @@ fn execute_return(
 }
 
 fn execute_match(
-    core: &GraphCore,
+    core: &mut GraphCore,
     query: &MatchQuery,
     params: &CypherParams,
 ) -> Result<CypherResult, String> {
+    validate_match_action(query)?;
     let mut rows = match_pattern(core, &query.pattern, params)?;
     if !query.where_terms.is_empty() {
         rows.retain(|binding| predicates_match(core, binding, &query.where_terms, params));
@@ -296,7 +346,385 @@ fn execute_match(
     if query.optional && rows.is_empty() {
         rows.push(BindingMap::new());
     }
-    project_rows(core, rows, &query.projection, params, "read")
+    match &query.action {
+        MatchAction::Return(projection) => project_rows(core, rows, projection, params, "read"),
+        MatchAction::Update {
+            set_items,
+            remove_items,
+            projection,
+        } => execute_update(core, rows, set_items, remove_items, projection, params),
+        MatchAction::Delete { detach, variables } => execute_delete(core, rows, *detach, variables),
+    }
+}
+
+fn validate_match_action(query: &MatchQuery) -> Result<(), String> {
+    let mut aliases = BTreeMap::new();
+    for node in &query.pattern.nodes {
+        if let Some(var) = &node.var {
+            aliases.insert(var.clone(), true);
+        }
+    }
+    for rel in &query.pattern.rels {
+        if let Some(var) = &rel.var {
+            aliases.insert(var.clone(), false);
+        }
+    }
+    let require = |var: &str| {
+        aliases
+            .get(var)
+            .copied()
+            .ok_or_else(|| format!("unknown Cypher variable {var:?}"))
+    };
+    match &query.action {
+        MatchAction::Return(_) => Ok(()),
+        MatchAction::Update {
+            set_items,
+            remove_items,
+            ..
+        } => {
+            for item in set_items {
+                match item {
+                    SetItem::Property { var, .. } | SetItem::MergeMap { var, .. } => {
+                        require(var)?;
+                    }
+                    SetItem::Labels { var, .. } => {
+                        if !require(var)? {
+                            return Err(format!("SET labels requires node variable {var:?}"));
+                        }
+                    }
+                }
+            }
+            for item in remove_items {
+                match item {
+                    RemoveItem::Property { var, .. } => {
+                        require(var)?;
+                    }
+                    RemoveItem::Labels { var, .. } => {
+                        if !require(var)? {
+                            return Err(format!("REMOVE labels requires node variable {var:?}"));
+                        }
+                    }
+                }
+            }
+            Ok(())
+        }
+        MatchAction::Delete { variables, .. } => {
+            for var in variables {
+                require(var)?;
+            }
+            Ok(())
+        }
+    }
+}
+
+fn execute_update(
+    core: &mut GraphCore,
+    rows: Vec<BindingMap>,
+    set_items: &[SetItem],
+    remove_items: &[RemoveItem],
+    projection: &Option<Projection>,
+    params: &CypherParams,
+) -> Result<CypherResult, String> {
+    let mut summary = CypherSummary {
+        statement_type: "write".to_string(),
+        ..CypherSummary::default()
+    };
+    for bindings in &rows {
+        for item in set_items {
+            apply_set_item(core, bindings, item, params, &mut summary)?;
+        }
+        for item in remove_items {
+            apply_remove_item(core, bindings, item, &mut summary)?;
+        }
+    }
+    match projection {
+        Some(projection) => {
+            let mut result = project_rows(core, rows, projection, params, "write")?;
+            copy_write_summary(&summary, &mut result.summary);
+            Ok(result)
+        }
+        None => Ok(CypherResult {
+            keys: Vec::new(),
+            records: Vec::new(),
+            summary,
+        }),
+    }
+}
+
+fn apply_set_item(
+    core: &mut GraphCore,
+    bindings: &BindingMap,
+    item: &SetItem,
+    params: &CypherParams,
+    summary: &mut CypherSummary,
+) -> Result<(), String> {
+    match item {
+        SetItem::Property { var, key, value } => {
+            let value = eval_expr(core, bindings, value, params)?;
+            apply_property_value(core, bindings, var, key, value, summary)
+        }
+        SetItem::MergeMap { var, value } => {
+            let value = eval_expr(core, bindings, value, params)?;
+            let CypherValue::Map(values) = value else {
+                return Err(format!("SET {var} += requires a map value"));
+            };
+            for (key, value) in values {
+                apply_property_value(core, bindings, var, &key, value, summary)?;
+            }
+            Ok(())
+        }
+        SetItem::Labels { var, labels } => {
+            let Some(Binding::Node(node_id)) = bindings.get(var) else {
+                return Err(format!("SET labels requires node variable {var:?}"));
+            };
+            let before = core
+                .get_node(*node_id)
+                .ok_or_else(|| format!("node {node_id} not found"))?;
+            let added = labels
+                .iter()
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .filter(|label| !before.labels.contains(label))
+                .count();
+            core.update_node_in_place(
+                *node_id,
+                None,
+                labels.clone(),
+                Vec::new(),
+                PropertyMap::new(),
+                Vec::new(),
+            )?;
+            summary.labels_added += added;
+            Ok(())
+        }
+    }
+}
+
+fn apply_property_value(
+    core: &mut GraphCore,
+    bindings: &BindingMap,
+    var: &str,
+    key: &str,
+    value: CypherValue,
+    summary: &mut CypherSummary,
+) -> Result<(), String> {
+    let binding = bindings
+        .get(var)
+        .ok_or_else(|| format!("unknown Cypher variable {var:?}"))?
+        .clone();
+    match binding {
+        Binding::Node(node_id) => {
+            let before = core
+                .get_node(node_id)
+                .ok_or_else(|| format!("node {node_id} not found"))?;
+            if key == "external_id" {
+                let CypherValue::String(external_id) = value else {
+                    return Err("external_id must be set to a non-null string".to_string());
+                };
+                if before.external_id != external_id {
+                    core.update_node_in_place(
+                        node_id,
+                        Some(external_id),
+                        Vec::new(),
+                        Vec::new(),
+                        PropertyMap::new(),
+                        Vec::new(),
+                    )?;
+                    summary.properties_set += 1;
+                }
+                return Ok(());
+            }
+            match value {
+                CypherValue::Null => {
+                    if before.properties.contains_key(key) {
+                        core.update_node_in_place(
+                            node_id,
+                            None,
+                            Vec::new(),
+                            Vec::new(),
+                            PropertyMap::new(),
+                            vec![key.to_string()],
+                        )?;
+                        summary.properties_removed += 1;
+                    }
+                }
+                value => {
+                    let property = value.as_property_value().ok_or_else(|| {
+                        format!("property {key:?} must be a scalar Cypher property value")
+                    })?;
+                    if before.properties.get(key) != Some(&property) {
+                        core.update_node_in_place(
+                            node_id,
+                            None,
+                            Vec::new(),
+                            Vec::new(),
+                            PropertyMap::from([(key.to_string(), property)]),
+                            Vec::new(),
+                        )?;
+                        summary.properties_set += 1;
+                    }
+                }
+            }
+        }
+        Binding::Relationship(edge_id) => {
+            if key == "external_id" {
+                return Err("relationships do not have external_id".to_string());
+            }
+            let before = core
+                .get_edge(edge_id)
+                .ok_or_else(|| format!("edge {edge_id} not found"))?;
+            match value {
+                CypherValue::Null => {
+                    if before.properties.contains_key(key) {
+                        core.update_edge_in_place(
+                            edge_id,
+                            PropertyMap::new(),
+                            vec![key.to_string()],
+                        )?;
+                        summary.properties_removed += 1;
+                    }
+                }
+                value => {
+                    let property = value.as_property_value().ok_or_else(|| {
+                        format!("property {key:?} must be a scalar Cypher property value")
+                    })?;
+                    if before.properties.get(key) != Some(&property) {
+                        core.update_edge_in_place(
+                            edge_id,
+                            PropertyMap::from([(key.to_string(), property)]),
+                            Vec::new(),
+                        )?;
+                        summary.properties_set += 1;
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn apply_remove_item(
+    core: &mut GraphCore,
+    bindings: &BindingMap,
+    item: &RemoveItem,
+    summary: &mut CypherSummary,
+) -> Result<(), String> {
+    match item {
+        RemoveItem::Property { var, key } => {
+            if key == "external_id" {
+                return Err("external_id cannot be removed".to_string());
+            }
+            let binding = bindings
+                .get(var)
+                .ok_or_else(|| format!("unknown Cypher variable {var:?}"))?
+                .clone();
+            match binding {
+                Binding::Node(node_id) => {
+                    let before = core.get_node(node_id).unwrap();
+                    if before.properties.contains_key(key) {
+                        core.update_node_in_place(
+                            node_id,
+                            None,
+                            Vec::new(),
+                            Vec::new(),
+                            PropertyMap::new(),
+                            vec![key.clone()],
+                        )?;
+                        summary.properties_removed += 1;
+                    }
+                }
+                Binding::Relationship(edge_id) => {
+                    let before = core.get_edge(edge_id).unwrap();
+                    if before.properties.contains_key(key) {
+                        core.update_edge_in_place(edge_id, PropertyMap::new(), vec![key.clone()])?;
+                        summary.properties_removed += 1;
+                    }
+                }
+            }
+            Ok(())
+        }
+        RemoveItem::Labels { var, labels } => {
+            let Some(Binding::Node(node_id)) = bindings.get(var) else {
+                return Err(format!("REMOVE labels requires node variable {var:?}"));
+            };
+            let before = core.get_node(*node_id).unwrap();
+            let removed = labels
+                .iter()
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .filter(|label| before.labels.contains(label))
+                .count();
+            if removed > 0 {
+                core.update_node_in_place(
+                    *node_id,
+                    None,
+                    Vec::new(),
+                    labels.clone(),
+                    PropertyMap::new(),
+                    Vec::new(),
+                )?;
+                summary.labels_removed += removed;
+            }
+            Ok(())
+        }
+    }
+}
+
+fn execute_delete(
+    core: &mut GraphCore,
+    rows: Vec<BindingMap>,
+    detach: bool,
+    variables: &[String],
+) -> Result<CypherResult, String> {
+    let before_nodes = core.node_count();
+    let before_edges = core.edge_count();
+    let mut node_ids = BTreeSet::new();
+    let mut edge_ids = BTreeSet::new();
+    for bindings in &rows {
+        for var in variables {
+            match bindings.get(var) {
+                Some(Binding::Node(id)) => {
+                    node_ids.insert(*id);
+                }
+                Some(Binding::Relationship(id)) => {
+                    edge_ids.insert(*id);
+                }
+                None => return Err(format!("unknown Cypher variable {var:?}")),
+            }
+        }
+    }
+    for edge_id in edge_ids {
+        if core.get_edge(edge_id).is_some() {
+            core.delete_edge_in_place(edge_id)?;
+        }
+    }
+    for node_id in node_ids {
+        if core.get_node(node_id).is_some() {
+            core.delete_node_in_place(node_id, detach)?;
+        }
+    }
+    Ok(CypherResult {
+        keys: Vec::new(),
+        records: Vec::new(),
+        summary: CypherSummary {
+            statement_type: "write".to_string(),
+            nodes_deleted: before_nodes - core.node_count(),
+            relationships_deleted: before_edges - core.edge_count(),
+            rows: 0,
+            ..CypherSummary::default()
+        },
+    })
+}
+
+fn copy_write_summary(source: &CypherSummary, target: &mut CypherSummary) {
+    target.nodes_created = source.nodes_created;
+    target.relationships_created = source.relationships_created;
+    target.properties_set = source.properties_set;
+    target.properties_removed = source.properties_removed;
+    target.labels_added = source.labels_added;
+    target.labels_removed = source.labels_removed;
+    target.nodes_deleted = source.nodes_deleted;
+    target.relationships_deleted = source.relationships_deleted;
 }
 
 fn execute_create(
@@ -343,9 +771,7 @@ fn project_write_result(
     match projection {
         Some(projection) => {
             let mut result = project_rows(core, vec![binding], projection, params, "write")?;
-            result.summary.nodes_created = summary.nodes_created;
-            result.summary.relationships_created = summary.relationships_created;
-            result.summary.properties_set = summary.properties_set;
+            copy_write_summary(&summary, &mut result.summary);
             Ok(result)
         }
         None => {
@@ -374,10 +800,11 @@ fn create_pattern(
                 continue;
             }
         }
-        let properties = eval_property_map(&node.properties, &bindings, core, params)?;
-        let external_id = match properties.get("external_id") {
-            Some(PropertyValue::String(value)) => Some(value.clone()),
-            _ => None,
+        let mut properties = eval_property_map(&node.properties, &bindings, core, params)?;
+        let external_id = match properties.remove("external_id") {
+            Some(PropertyValue::String(value)) => Some(value),
+            Some(_) => return Err("external_id must be a string".to_string()),
+            None => None,
         };
         let id = core.add_node(external_id, node.labels.clone(), properties)?;
         summary.nodes_created += 1;
@@ -750,6 +1177,12 @@ fn eval_expr(
                 .map(|value| eval_expr(core, bindings, value, params))
                 .collect::<Result<Vec<_>, _>>()?,
         )),
+        Expr::Map(values) => Ok(CypherValue::Map(
+            values
+                .iter()
+                .map(|(key, value)| Ok((key.clone(), eval_expr(core, bindings, value, params)?)))
+                .collect::<Result<BTreeMap<_, _>, String>>()?,
+        )),
         Expr::Parameter(name) => params
             .get(name)
             .cloned()
@@ -916,13 +1349,15 @@ fn parse_query(query: &str) -> Result<Query, String> {
     }
     let union_parts = split_keyword_top_level(query, "UNION");
     if union_parts.len() > 1 {
+        let queries = union_parts
+            .into_iter()
+            .map(parse_query)
+            .collect::<Result<Vec<_>, _>>()?;
+        if queries.iter().any(Query::is_write) {
+            return Err("UNION only supports read queries".to_string());
+        }
         return Ok(Query {
-            statement: Statement::Union(
-                union_parts
-                    .into_iter()
-                    .map(parse_query)
-                    .collect::<Result<Vec<_>, _>>()?,
-            ),
+            statement: Statement::Union(queries),
         });
     }
 
@@ -948,26 +1383,198 @@ fn parse_query(query: &str) -> Result<Query, String> {
 
 fn parse_match_query(query: &str, optional: bool) -> Result<Query, String> {
     let prefix = if optional { "OPTIONAL MATCH" } else { "MATCH" };
-    let after_prefix = query[prefix.len()..].trim();
-    let return_index = find_keyword_top_level(after_prefix, "RETURN")
-        .ok_or_else(|| "MATCH query requires RETURN".to_string())?;
-    let before_return = after_prefix[..return_index].trim();
-    let return_tail = after_prefix[return_index + "RETURN".len()..].trim();
-    let (pattern_text, where_terms) = match find_keyword_top_level(before_return, "WHERE") {
-        Some(where_index) => (
-            before_return[..where_index].trim(),
-            parse_predicates(before_return[where_index + "WHERE".len()..].trim())?,
-        ),
-        None => (before_return, Vec::new()),
+    let input = query[prefix.len()..].trim();
+    let clauses = [
+        "WHERE",
+        "SET",
+        "REMOVE",
+        "DETACH DELETE",
+        "DELETE",
+        "RETURN",
+    ];
+    let first_clause = next_clause_index(input, 0, &clauses)
+        .ok_or_else(|| "MATCH query requires RETURN or a write clause".to_string())?;
+    let pattern = parse_pattern(input[..first_clause].trim())?;
+    let mut cursor = first_clause;
+    let mut where_terms = Vec::new();
+
+    let tail = input[cursor..].trim_start();
+    cursor = input.len() - tail.len();
+    if keyword_at(tail, "WHERE") {
+        let start = cursor + "WHERE".len();
+        let end = next_clause_index(
+            input,
+            start,
+            &["SET", "REMOVE", "DETACH DELETE", "DELETE", "RETURN"],
+        )
+        .unwrap_or(input.len());
+        where_terms = parse_predicates(input[start..end].trim())?;
+        cursor = end;
+    }
+
+    let mut set_items = Vec::new();
+    let mut remove_items = Vec::new();
+    let mut projection = None;
+    let mut seen_remove = false;
+    while cursor < input.len() {
+        let tail = input[cursor..].trim_start();
+        cursor = input.len() - tail.len();
+        if keyword_at(tail, "SET") {
+            if seen_remove {
+                return Err("SET cannot follow REMOVE in the current Cypher subset".to_string());
+            }
+            let start = cursor + "SET".len();
+            let end = next_clause_index(
+                input,
+                start,
+                &["SET", "REMOVE", "DETACH DELETE", "DELETE", "RETURN"],
+            )
+            .unwrap_or(input.len());
+            set_items.extend(parse_set_items(input[start..end].trim())?);
+            cursor = end;
+        } else if keyword_at(tail, "REMOVE") {
+            seen_remove = true;
+            let start = cursor + "REMOVE".len();
+            let end = next_clause_index(
+                input,
+                start,
+                &["SET", "REMOVE", "DETACH DELETE", "DELETE", "RETURN"],
+            )
+            .unwrap_or(input.len());
+            remove_items.extend(parse_remove_items(input[start..end].trim())?);
+            cursor = end;
+        } else if keyword_at(tail, "DETACH DELETE") || keyword_at(tail, "DELETE") {
+            if optional {
+                return Err("OPTIONAL MATCH cannot be used with DELETE".to_string());
+            }
+            if !set_items.is_empty() || !remove_items.is_empty() {
+                return Err("DELETE cannot be combined with SET or REMOVE".to_string());
+            }
+            let detach = keyword_at(tail, "DETACH DELETE");
+            let keyword = if detach { "DETACH DELETE" } else { "DELETE" };
+            let variables_text = input[cursor + keyword.len()..].trim();
+            if find_keyword_top_level(variables_text, "RETURN").is_some() {
+                return Err("DELETE ... RETURN is not supported".to_string());
+            }
+            let variables = parse_delete_variables(variables_text)?;
+            return Ok(Query {
+                statement: Statement::Match(MatchQuery {
+                    optional,
+                    pattern,
+                    where_terms,
+                    action: MatchAction::Delete { detach, variables },
+                }),
+            });
+        } else if keyword_at(tail, "RETURN") {
+            projection = Some(parse_projection(input[cursor + "RETURN".len()..].trim())?);
+            cursor = input.len();
+        } else {
+            return Err(format!("unsupported MATCH clause near {tail:?}"));
+        }
+    }
+
+    let action = if set_items.is_empty() && remove_items.is_empty() {
+        MatchAction::Return(
+            projection.ok_or_else(|| "read-only MATCH query requires RETURN".to_string())?,
+        )
+    } else {
+        if optional {
+            return Err("OPTIONAL MATCH cannot be used with SET or REMOVE".to_string());
+        }
+        MatchAction::Update {
+            set_items,
+            remove_items,
+            projection,
+        }
     };
     Ok(Query {
         statement: Statement::Match(MatchQuery {
             optional,
-            pattern: parse_pattern(pattern_text)?,
+            pattern,
             where_terms,
-            projection: parse_projection(return_tail)?,
+            action,
         }),
     })
+}
+
+fn parse_set_items(input: &str) -> Result<Vec<SetItem>, String> {
+    if input.is_empty() {
+        return Err("SET requires at least one item".to_string());
+    }
+    split_top_level(input, ',')
+        .into_iter()
+        .map(parse_set_item)
+        .collect()
+}
+
+fn parse_set_item(input: &str) -> Result<SetItem, String> {
+    if let Some(index) = find_operator_top_level(input, "+=") {
+        return Ok(SetItem::MergeMap {
+            var: parse_identifier(input[..index].trim())?,
+            value: parse_expr(input[index + 2..].trim())?,
+        });
+    }
+    if let Some(index) = find_operator_top_level(input, "=") {
+        let (var, key) = parse_property_access(input[..index].trim())?;
+        return Ok(SetItem::Property {
+            var,
+            key,
+            value: parse_expr(input[index + 1..].trim())?,
+        });
+    }
+    let (var, labels) = parse_label_target(input)?;
+    Ok(SetItem::Labels { var, labels })
+}
+
+fn parse_remove_items(input: &str) -> Result<Vec<RemoveItem>, String> {
+    if input.is_empty() {
+        return Err("REMOVE requires at least one item".to_string());
+    }
+    split_top_level(input, ',')
+        .into_iter()
+        .map(|item| {
+            if item.contains('.') {
+                let (var, key) = parse_property_access(item)?;
+                Ok(RemoveItem::Property { var, key })
+            } else {
+                let (var, labels) = parse_label_target(item)?;
+                Ok(RemoveItem::Labels { var, labels })
+            }
+        })
+        .collect()
+}
+
+fn parse_property_access(input: &str) -> Result<(String, String), String> {
+    let Some((var, key)) = input.split_once('.') else {
+        return Err(format!("expected property access, got {input:?}"));
+    };
+    if key.contains('.') {
+        return Err(format!("invalid property access {input:?}"));
+    }
+    Ok((parse_identifier(var)?, parse_property_key(key)?))
+}
+
+fn parse_label_target(input: &str) -> Result<(String, Vec<String>), String> {
+    let mut parts = input.split(':');
+    let var = parse_identifier(parts.next().unwrap_or_default())?;
+    let labels = parts.map(parse_identifier).collect::<Result<Vec<_>, _>>()?;
+    if labels.is_empty() {
+        return Err(format!(
+            "label update requires at least one label in {input:?}"
+        ));
+    }
+    Ok((var, labels))
+}
+
+fn parse_delete_variables(input: &str) -> Result<Vec<String>, String> {
+    let variables = split_top_level(input, ',')
+        .into_iter()
+        .map(parse_identifier)
+        .collect::<Result<Vec<_>, _>>()?;
+    if variables.is_empty() {
+        return Err("DELETE requires at least one variable".to_string());
+    }
+    Ok(variables)
 }
 
 fn parse_write_query(query: &str, keyword: &str, merge: bool) -> Result<Query, String> {
@@ -1320,6 +1927,9 @@ fn parse_expr(input: &str) -> Result<Expr, String> {
     if input.eq_ignore_ascii_case("null") {
         return Ok(Expr::Literal(CypherValue::Null));
     }
+    if input.starts_with('{') && input.ends_with('}') {
+        return Ok(Expr::Map(parse_property_map(&input[1..input.len() - 1])?));
+    }
     if input.starts_with('[') && input.ends_with(']') {
         return Ok(Expr::List(
             split_top_level(&input[1..input.len() - 1], ',')
@@ -1659,6 +2269,144 @@ mod tests {
         .unwrap();
         assert_eq!(result.keys, vec!["source", "rel", "target"]);
         assert_eq!(result.records.len(), 1);
+    }
+
+    #[test]
+    fn update_and_delete_crud_round_trip() {
+        let mut core = GraphCore::new();
+        let params = CypherParams::new();
+        execute_autocommit(
+            &mut core,
+            "CREATE (a:Person {external_id: 'alice', name: 'Alice', obsolete: 'x'})-[r:KNOWS {old: 'yes'}]->(b:Person {external_id: 'bob'}) RETURN a",
+            &params,
+        )
+        .unwrap();
+
+        let updated = execute_autocommit(
+            &mut core,
+            "MATCH (a:Person {external_id: 'alice'})-[r:KNOWS]->(b) SET a.name = 'Alicia', a += {rank: 2, obsolete: null}, a:Researcher, r.weight = 0.5 REMOVE a:Person, r.old RETURN a.name AS name, a.rank AS rank, labels(a) AS labels, r.weight AS weight",
+            &params,
+        )
+        .unwrap();
+        assert_eq!(updated.summary.properties_set, 3);
+        assert_eq!(updated.summary.properties_removed, 2);
+        assert_eq!(updated.summary.labels_added, 1);
+        assert_eq!(updated.summary.labels_removed, 1);
+        assert_eq!(updated.records.len(), 1);
+        assert_eq!(core.get_node_id("alice"), Some(0));
+        assert_eq!(core.nodes_with_label("Researcher"), vec![0]);
+        assert_eq!(core.nodes_with_label("Person"), vec![1]);
+
+        let error = execute_autocommit(
+            &mut core,
+            "MATCH (a {external_id: 'alice'}) DELETE a",
+            &params,
+        )
+        .unwrap_err();
+        assert!(error.contains("relationships"));
+        assert_eq!(core.node_count(), 2);
+        assert_eq!(core.edge_count(), 1);
+
+        let deleted = execute_autocommit(
+            &mut core,
+            "MATCH (a {external_id: 'alice'})-[r:KNOWS]->(b) DELETE r, a",
+            &params,
+        )
+        .unwrap();
+        assert_eq!(deleted.summary.nodes_deleted, 1);
+        assert_eq!(deleted.summary.relationships_deleted, 1);
+        assert_eq!(core.node_count(), 1);
+        assert_eq!(core.edge_count(), 0);
+    }
+
+    #[test]
+    fn detach_delete_and_external_id_update_work() {
+        let mut core = GraphCore::new();
+        let params = CypherParams::from([(
+            "updates".to_string(),
+            CypherValue::Map(BTreeMap::from([
+                ("name".to_string(), CypherValue::String("Alice".to_string())),
+                ("active".to_string(), CypherValue::Bool(true)),
+            ])),
+        )]);
+        execute_autocommit(
+            &mut core,
+            "CREATE (a {external_id: 'a'})-[:LINK]->(b {external_id: 'b'})",
+            &params,
+        )
+        .unwrap();
+        let result = execute_autocommit(
+            &mut core,
+            "MATCH (a {external_id: 'a'}) SET a.external_id = 'alice', a += $updates RETURN a.external_id AS id, a.name AS name",
+            &params,
+        )
+        .unwrap();
+        assert_eq!(result.records.len(), 1);
+        assert_eq!(core.get_node_id("a"), None);
+        assert_eq!(core.get_node_id("alice"), Some(0));
+
+        let deleted = execute_autocommit(
+            &mut core,
+            "MATCH (a {external_id: 'alice'}) DETACH DELETE a",
+            &params,
+        )
+        .unwrap();
+        assert_eq!(deleted.summary.nodes_deleted, 1);
+        assert_eq!(deleted.summary.relationships_deleted, 1);
+    }
+
+    #[test]
+    fn duplicate_label_updates_count_unique_changes() {
+        let mut core = GraphCore::new();
+        core.add_node(Some("n".to_string()), Vec::new(), PropertyMap::new())
+            .unwrap();
+        let added = execute_autocommit(
+            &mut core,
+            "MATCH (n {external_id: 'n'}) SET n:A:A RETURN labels(n) AS labels",
+            &CypherParams::new(),
+        )
+        .unwrap();
+        assert_eq!(added.summary.labels_added, 1);
+        assert_eq!(core.nodes_with_label("A"), vec![0]);
+        let removed = execute_autocommit(
+            &mut core,
+            "MATCH (n {external_id: 'n'}) REMOVE n:A:A RETURN labels(n) AS labels",
+            &CypherParams::new(),
+        )
+        .unwrap();
+        assert_eq!(removed.summary.labels_removed, 1);
+        assert!(core.nodes_with_label("A").is_empty());
+    }
+
+    #[test]
+    fn crud_parser_rejects_unsupported_combinations_and_readonly_writes() {
+        let core = GraphCore::new();
+        assert!(parse_query("MATCH (n) DELETE n RETURN n")
+            .unwrap_err()
+            .contains("not supported"));
+        assert!(parse_query("MATCH (n) SET n.x = 1 DELETE n")
+            .unwrap_err()
+            .contains("cannot be combined"));
+        assert!(parse_query("MATCH (n) REMOVE n.x SET n.x = 1")
+            .unwrap_err()
+            .contains("cannot follow"));
+        assert!(parse_query("MATCH (n) RETURN n UNION MATCH (m) DELETE m")
+            .unwrap_err()
+            .contains("only supports read"));
+        let mut mutable = GraphCore::new();
+        mutable
+            .add_node(Some("n".to_string()), Vec::new(), PropertyMap::new())
+            .unwrap();
+        assert!(execute_autocommit(
+            &mut mutable,
+            "MATCH (n {external_id: 'n'}) REMOVE n.external_id",
+            &CypherParams::new(),
+        )
+        .unwrap_err()
+        .contains("cannot be removed"));
+        let error =
+            execute_snapshot(&core, "MATCH (n) SET n.x = 1", &CypherParams::new()).unwrap_err();
+        assert!(error.contains("cannot execute write"));
     }
 
     #[test]

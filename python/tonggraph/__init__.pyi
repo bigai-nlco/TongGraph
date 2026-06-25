@@ -461,6 +461,37 @@ class Graph(GraphSnapshot):
         """Atomically add directed edge records and return their internal IDs."""
         ...
 
+    def update_node(
+        self,
+        node_id: int,
+        *,
+        external_id: str | None = None,
+        add_labels: Sequence[str] | None = None,
+        remove_labels: Sequence[str] | None = None,
+        set_properties: Properties | None = None,
+        remove_properties: Sequence[str] | None = None,
+    ) -> Node:
+        """Update a node and return its new record."""
+        ...
+
+    def update_edge(
+        self,
+        edge_id: int,
+        *,
+        set_properties: Properties | None = None,
+        remove_properties: Sequence[str] | None = None,
+    ) -> Edge:
+        """Update an edge and return its new record."""
+        ...
+
+    def delete_node(self, node_id: int, *, detach: bool = False) -> None:
+        """Delete a node, optionally deleting incident edges."""
+        ...
+
+    def delete_edge(self, edge_id: int) -> None:
+        """Delete an edge."""
+        ...
+
     def compact(self) -> None:
         """Compact the mutable adjacency overlay into a persisted compute segment."""
         ...

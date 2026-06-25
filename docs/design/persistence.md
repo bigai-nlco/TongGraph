@@ -73,6 +73,11 @@ thresholds in `src/core/lifecycle.rs`.
   the same SQLite database, stale handles raise a refresh-required error before
   writing. Call `Graph.refresh()` to reload from SQLite.
 - `add_nodes()` and `add_edges()` use one SQLite transaction per batch.
+- Node and edge updates/deletions commit as one SQLite change set before the
+  in-memory state is published. Property catalogs are rebuilt inside that
+  transaction so removed values do not remain indexed.
+- Monotonic next-node and next-edge IDs are stored in metadata so deleted IDs
+  are not reused after reopening a graph.
 - Properties are limited to Python-compatible scalar values: `bool`, `int`,
   finite `float`, and `str`.
 - Local `.db`, `.db-shm`, `.db-wal`, and `.segments/` artifacts are ignored by

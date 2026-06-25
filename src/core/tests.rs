@@ -865,6 +865,195 @@ fn invalid_domains_and_potentials_are_rejected() {
         .is_err());
 }
 
+#[test]
+fn graph_crud_updates_indexes_and_enforces_delete_rules() {
+    let mut graph = GraphCore::new();
+    let alice = graph
+        .add_node(
+            Some("alice".to_string()),
+            vec!["Person".to_string()],
+            typed_map([("name", s("Alice")), ("rank", PropertyValue::Int(1))]),
+        )
+        .unwrap();
+    let bob = graph
+        .add_node(Some("bob".to_string()), vec!["Person".to_string()], map([]))
+        .unwrap();
+    let edge = graph
+        .add_edge(alice, bob, "KNOWS".to_string(), map([("since", "2024")]))
+        .unwrap();
+
+    let updated = graph
+        .update_node(
+            alice,
+            Some("alice-2".to_string()),
+            vec!["Researcher".to_string()],
+            vec!["Person".to_string()],
+            typed_map([("rank", PropertyValue::Int(2))]),
+            vec!["name".to_string()],
+        )
+        .unwrap();
+    assert_eq!(updated.external_id, "alice-2");
+    assert_eq!(updated.labels, vec!["Researcher"]);
+    assert!(!updated.properties.contains_key("name"));
+    assert_eq!(graph.get_node_id("alice"), None);
+    assert_eq!(graph.get_node_id("alice-2"), Some(alice));
+    assert_eq!(graph.nodes_with_label("Person"), vec![bob]);
+    assert_eq!(graph.nodes_with_label("Researcher"), vec![alice]);
+    assert_eq!(
+        graph.nodes_with_property("rank", Some(&PropertyValue::Int(2))),
+        vec![alice]
+    );
+    assert!(graph
+        .update_node(
+            alice,
+            Some("bob".to_string()),
+            Vec::new(),
+            Vec::new(),
+            map([]),
+            Vec::new(),
+        )
+        .unwrap_err()
+        .contains("already exists"));
+    assert!(graph.delete_node(alice, false).is_err());
+
+    let updated_edge = graph
+        .update_edge(
+            edge,
+            typed_map([("weight", PropertyValue::Float(0.5))]),
+            vec!["since".to_string()],
+        )
+        .unwrap();
+    assert!(!updated_edge.properties.contains_key("since"));
+    assert_eq!(
+        graph.edges_with_property("weight", Some(&PropertyValue::Float(0.5))),
+        vec![edge]
+    );
+
+    graph.delete_edge(edge).unwrap();
+    assert_eq!(
+        graph.neighbors(alice, "out", None).unwrap(),
+        Vec::<u64>::new()
+    );
+    graph.delete_node(alice, false).unwrap();
+    assert!(graph.get_node(alice).is_none());
+}
+
+#[test]
+fn node_delete_rejects_probabilistic_owner_and_detach_removes_edges() {
+    let mut graph = GraphCore::new();
+    let owner = graph.add_node(None, Vec::new(), map([])).unwrap();
+    let other = graph.add_node(None, Vec::new(), map([])).unwrap();
+    graph
+        .add_edge(owner, other, "LINK".to_string(), map([]))
+        .unwrap();
+    graph
+        .add_variable(Some(owner), "binary".to_string(), None, map([]), map([]))
+        .unwrap();
+    assert!(graph
+        .delete_node(owner, true)
+        .unwrap_err()
+        .contains("probabilistic variables"));
+
+    let disposable = graph.add_node(None, Vec::new(), map([])).unwrap();
+    graph
+        .add_edge(disposable, other, "LINK".to_string(), map([]))
+        .unwrap();
+    graph.delete_node(disposable, true).unwrap();
+    assert!(graph.get_node(disposable).is_none());
+    assert_eq!(graph.edge_count(), 1);
+}
+
+#[test]
+fn graph_transaction_commits_consumed_ids_even_when_records_cancel_out() {
+    let mut graph = GraphCore::new();
+    let (mut staged, base_version) = graph.transaction_snapshot();
+    let transient = staged.add_node(None, Vec::new(), map([])).unwrap();
+    staged.delete_node(transient, false).unwrap();
+    graph
+        .commit_transaction_snapshot(&staged, base_version)
+        .unwrap();
+    let next = graph.add_node(None, Vec::new(), map([])).unwrap();
+    assert_eq!(next, transient + 1);
+}
+
+#[test]
+fn graph_transaction_rejects_parent_mutation_conflicts() {
+    let mut graph = GraphCore::new();
+    let node = graph
+        .add_node(Some("node".to_string()), Vec::new(), map([("name", "old")]))
+        .unwrap();
+    let (mut staged, base_version) = graph.transaction_snapshot();
+    staged
+        .update_node_in_place(
+            node,
+            None,
+            Vec::new(),
+            Vec::new(),
+            map([("name", "staged")]),
+            Vec::new(),
+        )
+        .unwrap();
+    graph.add_node(None, Vec::new(), map([])).unwrap();
+    let error = graph
+        .commit_transaction_snapshot(&staged, base_version)
+        .unwrap_err();
+    assert!(error.contains("graph changed since transaction started"));
+    assert_eq!(
+        graph.get_node(node).unwrap().properties["name"].encoded_value(),
+        "old"
+    );
+}
+
+#[test]
+fn sqlite_crud_persists_updates_deletes_and_segments() {
+    let path = temp_db_path("tonggraph-crud");
+    {
+        let mut graph = GraphCore::open(path.to_str().unwrap()).unwrap();
+        let a = graph
+            .add_node(
+                Some("a".to_string()),
+                vec!["Old".to_string()],
+                map([("name", "A")]),
+            )
+            .unwrap();
+        let b = graph
+            .add_node(Some("b".to_string()), Vec::new(), map([]))
+            .unwrap();
+        let edge = graph
+            .add_edge(a, b, "LINK".to_string(), map([("old", "yes")]))
+            .unwrap();
+        graph
+            .update_node(
+                a,
+                Some("a2".to_string()),
+                vec!["New".to_string()],
+                vec!["Old".to_string()],
+                map([("name", "Alice")]),
+                Vec::new(),
+            )
+            .unwrap();
+        graph
+            .update_edge(edge, map([("weight", "2")]), vec!["old".to_string()])
+            .unwrap();
+        graph.delete_node(b, true).unwrap();
+    }
+
+    let mut graph = GraphCore::open(path.to_str().unwrap()).unwrap();
+    assert_eq!(graph.node_count(), 1);
+    assert_eq!(graph.edge_count(), 0);
+    assert_eq!(graph.get_node_id("a2"), Some(0));
+    assert_eq!(graph.nodes_with_label("New"), vec![0]);
+    assert_eq!(graph.nodes_with_label("Old"), Vec::<u64>::new());
+    assert_eq!(graph.neighbors(0, "out", None).unwrap(), Vec::<u64>::new());
+    assert_eq!(
+        graph.get_node(0).unwrap().properties["name"].encoded_value(),
+        "Alice"
+    );
+    let next = graph.add_node(None, Vec::new(), map([])).unwrap();
+    assert_eq!(next, 2);
+    cleanup_db(&path);
+}
+
 fn map<const N: usize>(values: [(&str, &str); N]) -> PropertyMap {
     values
         .into_iter()

@@ -5,6 +5,7 @@ mod entities;
 mod inference;
 mod lifecycle;
 mod metadata;
+mod mutations;
 mod properties;
 mod queries;
 pub(crate) mod segment;
@@ -56,4 +57,5 @@ pub(crate) struct GraphCore {
     next_trace_id: u64,
     store: Option<Box<dyn GraphStore>>,
     store_op_seq: Option<u64>,
+    mutation_version: u64,
 }

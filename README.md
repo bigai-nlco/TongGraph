@@ -17,8 +17,9 @@ TongGraph is a lightweight embedded graph compute database for Python applicatio
 - Structured path-query DSL plus a provider-neutral natural-language compiler
   hook.
 - Embedded Cypher compatibility subset for common local `CREATE`, `MATCH`,
-  `MERGE`, and `RETURN` flows.
-- Probabilistic graph layer with variables, CPDs, factor tables, evidence,
+- Embedded Cypher compatibility subset for local `MATCH`, `CREATE`, `MERGE`,
+  `SET`, `REMOVE`, `DELETE`, `DETACH DELETE`, `RETURN`, parameters, and staged
+  transactions.
   active-subgraph belief propagation, posteriors, and traces.
 - Reproducible Python benchmark scripts for graph algorithms and belief
   propagation.

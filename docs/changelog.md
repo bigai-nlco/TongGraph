@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Completes the embedded Cypher CRUD subset with `SET`, `REMOVE`, `DELETE`,
+  `DETACH DELETE`, direct Python graph mutation methods, and transactional
+  stale-handle protection for consumed graph IDs.
+
 ## 0.1.0
 
 TongGraph 0.1.0 is the first self-contained release of the Rust-core graph

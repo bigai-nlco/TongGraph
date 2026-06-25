@@ -309,6 +309,7 @@ impl GraphCore {
             }
             subgraph.insert_loaded_edge(edge.clone())?;
         }
+        subgraph.fulltext_indexes = self.fulltext_indexes.clone();
         subgraph.compact_segments()?;
         Ok(subgraph)
     }

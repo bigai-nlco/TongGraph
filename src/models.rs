@@ -92,6 +92,22 @@ impl GraphChanges {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct FullTextIndexDefinition {
+    pub(crate) name: String,
+    pub(crate) target: String,
+    pub(crate) properties: Vec<String>,
+    pub(crate) tokenizer: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct FullTextSearchResult {
+    pub(crate) kind: String,
+    pub(crate) id: u64,
+    pub(crate) score: f64,
+    pub(crate) matched_fields: Vec<String>,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct VariableRecord {
     pub(crate) id: u64,

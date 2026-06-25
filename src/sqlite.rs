@@ -4,8 +4,8 @@ use crate::codec::{
 };
 use crate::core::segment::ComputeSegment;
 use crate::models::{
-    EdgeRecord, EvidenceRecord, FactorRecord, FactorTableRecord, GraphChanges, NodeRecord,
-    PropertyMap, TraceRecord, VariableRecord,
+    EdgeRecord, EvidenceRecord, FactorRecord, FactorTableRecord, FullTextIndexDefinition,
+    GraphChanges, NodeRecord, PropertyMap, TraceRecord, VariableRecord,
 };
 use std::ffi::{c_char, c_int, c_uchar, c_void, CStr, CString};
 use std::fs;
@@ -91,6 +91,25 @@ pub(crate) trait GraphStore {
     ) -> Result<(), String>;
     fn current_op_seq(&self) -> Result<u64, String>;
     fn load_next_ids(&self) -> Result<(Option<u64>, Option<u64>), String>;
+    fn load_fulltext_indexes(&self) -> Result<Vec<FullTextIndexDefinition>, String>;
+    fn create_fulltext_index(
+        &self,
+        definition: &FullTextIndexDefinition,
+        nodes: &[NodeRecord],
+        edges: &[EdgeRecord],
+    ) -> Result<(), String>;
+    fn drop_fulltext_index(&self, name: &str) -> Result<(), String>;
+    fn rebuild_fulltext_indexes(
+        &self,
+        definitions: &[FullTextIndexDefinition],
+        nodes: &[NodeRecord],
+        edges: &[EdgeRecord],
+    ) -> Result<(), String>;
+    fn fulltext_candidates(
+        &self,
+        definition: &FullTextIndexDefinition,
+        expression: &str,
+    ) -> Result<Vec<u64>, String>;
     fn path(&self) -> String;
 }
 
@@ -182,6 +201,252 @@ impl SqliteStore {
             Ok(())
         })();
         self.finish_transaction(result)
+    }
+
+    pub(crate) fn load_fulltext_indexes(&self) -> Result<Vec<FullTextIndexDefinition>, String> {
+        let mut stmt = self.prepare(
+            "SELECT name, target, properties, tokenizer FROM fulltext_indexes ORDER BY name;",
+        )?;
+        let mut definitions = Vec::new();
+        loop {
+            match stmt.step()? {
+                SQLITE_ROW => definitions.push(FullTextIndexDefinition {
+                    name: stmt.column_text(0)?,
+                    target: stmt.column_text(1)?,
+                    properties: decode_list(&stmt.column_text(2)?),
+                    tokenizer: stmt.column_text(3)?,
+                }),
+                SQLITE_DONE => break,
+                rc => return Err(format!("unexpected SQLite step result {rc}")),
+            }
+        }
+        Ok(definitions)
+    }
+
+    pub(crate) fn create_fulltext_index(
+        &self,
+        definition: &FullTextIndexDefinition,
+        nodes: &[NodeRecord],
+        edges: &[EdgeRecord],
+    ) -> Result<(), String> {
+        self.ensure_fulltext_table(&definition.tokenizer)?;
+        self.exec("BEGIN IMMEDIATE;")?;
+        let result = (|| {
+            let mut stmt = self.prepare(
+                "INSERT INTO fulltext_indexes (name, target, properties, tokenizer) VALUES (?1, ?2, ?3, ?4);",
+            )?;
+            stmt.bind_text(1, &definition.name)?;
+            stmt.bind_text(2, &definition.target)?;
+            stmt.bind_text(3, &encode_list(&definition.properties))?;
+            stmt.bind_text(4, &definition.tokenizer)?;
+            stmt.step_done()?;
+            self.rebuild_fulltext_definition(definition, nodes, edges)?;
+            self.append_op("create_fulltext_index", 0, &definition.name)?;
+            Ok(())
+        })();
+        self.finish_transaction(result)
+    }
+
+    pub(crate) fn drop_fulltext_index(&self, name: &str) -> Result<(), String> {
+        let definition = self
+            .load_fulltext_indexes()?
+            .into_iter()
+            .find(|definition| definition.name == name)
+            .ok_or_else(|| format!("full-text index {name:?} not found"))?;
+        self.ensure_fulltext_table(&definition.tokenizer)?;
+        self.exec("BEGIN IMMEDIATE;")?;
+        let result = (|| {
+            self.delete_fulltext_index_rows(&definition)?;
+            let mut stmt = self.prepare("DELETE FROM fulltext_indexes WHERE name = ?1;")?;
+            stmt.bind_text(1, name)?;
+            stmt.step_done()?;
+            self.append_op("drop_fulltext_index", 0, name)?;
+            Ok(())
+        })();
+        self.finish_transaction(result)
+    }
+
+    pub(crate) fn rebuild_fulltext_indexes(
+        &self,
+        definitions: &[FullTextIndexDefinition],
+        nodes: &[NodeRecord],
+        edges: &[EdgeRecord],
+    ) -> Result<(), String> {
+        if definitions.is_empty() {
+            return Ok(());
+        }
+        let mut tokenizers = definitions
+            .iter()
+            .map(|definition| definition.tokenizer.as_str())
+            .collect::<Vec<_>>();
+        tokenizers.sort_unstable();
+        tokenizers.dedup();
+        let mut rebuild = definitions.to_vec();
+        for tokenizer in tokenizers {
+            if self.ensure_healthy_fulltext_table(tokenizer)? {
+                for definition in self
+                    .load_fulltext_indexes()?
+                    .into_iter()
+                    .filter(|definition| definition.tokenizer == tokenizer)
+                {
+                    if !rebuild
+                        .iter()
+                        .any(|existing| existing.name == definition.name)
+                    {
+                        rebuild.push(definition);
+                    }
+                }
+            }
+        }
+        self.exec("BEGIN IMMEDIATE;")?;
+        let result = (|| {
+            for definition in &rebuild {
+                self.rebuild_fulltext_definition(definition, nodes, edges)?;
+            }
+            Ok(())
+        })();
+        self.finish_transaction(result)
+    }
+
+    pub(crate) fn fulltext_candidates(
+        &self,
+        definition: &FullTextIndexDefinition,
+        expression: &str,
+    ) -> Result<Vec<u64>, String> {
+        self.ensure_fulltext_table(&definition.tokenizer)?;
+        let table = fulltext_table(&definition.tokenizer)?;
+        let sql = format!(
+            "SELECT entity_id FROM {table} WHERE {table} MATCH ?1 AND index_name = ?2 ORDER BY entity_id;"
+        );
+        let mut stmt = self.prepare(&sql)?;
+        stmt.bind_text(1, expression)?;
+        stmt.bind_text(2, &definition.name)?;
+        let mut ids = Vec::new();
+        loop {
+            match stmt.step()? {
+                SQLITE_ROW => ids.push(stmt.column_i64(0)?),
+                SQLITE_DONE => break,
+                rc => return Err(format!("unexpected SQLite step result {rc}")),
+            }
+        }
+        Ok(ids)
+    }
+
+    fn ensure_healthy_fulltext_table(&self, tokenizer: &str) -> Result<bool, String> {
+        self.ensure_fulltext_table(tokenizer)?;
+        let table = fulltext_table(tokenizer)?;
+        let integrity_check = format!("INSERT INTO {table} ({table}) VALUES ('integrity-check');");
+        if self.exec(&integrity_check).is_ok() {
+            return Ok(false);
+        }
+        self.exec(&format!("DROP TABLE IF EXISTS {table};"))
+            .map_err(|error| {
+                format!("failed to remove corrupt SQLite FTS5 table {table:?}: {error}")
+            })?;
+        self.ensure_fulltext_table(tokenizer)?;
+        Ok(true)
+    }
+
+    fn ensure_fulltext_table(&self, tokenizer: &str) -> Result<(), String> {
+        let (table, tokenizer_sql) = match tokenizer {
+            "unicode61" => ("fulltext_unicode", "unicode61"),
+            "trigram" => ("fulltext_trigram", "trigram"),
+            _ => return Err(format!("unknown full-text tokenizer {tokenizer:?}")),
+        };
+        self.exec(&format!(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS {table} USING fts5(index_name UNINDEXED, target UNINDEXED, entity_id UNINDEXED, content, tokenize='{tokenizer_sql}');"
+        ))
+        .map_err(|error| format!("SQLite FTS5 tokenizer {tokenizer:?} is unavailable: {error}"))
+    }
+
+    fn rebuild_fulltext_definition(
+        &self,
+        definition: &FullTextIndexDefinition,
+        nodes: &[NodeRecord],
+        edges: &[EdgeRecord],
+    ) -> Result<(), String> {
+        self.delete_fulltext_index_rows(definition)?;
+        match definition.target.as_str() {
+            "node" => {
+                for node in nodes {
+                    self.insert_fulltext_entity(definition, node.id, &node.properties)?;
+                }
+            }
+            "edge" => {
+                for edge in edges {
+                    self.insert_fulltext_entity(definition, edge.id, &edge.properties)?;
+                }
+            }
+            _ => return Err(format!("unknown full-text target {:?}", definition.target)),
+        }
+        Ok(())
+    }
+
+    fn delete_fulltext_index_rows(
+        &self,
+        definition: &FullTextIndexDefinition,
+    ) -> Result<(), String> {
+        let table = fulltext_table(&definition.tokenizer)?;
+        let mut stmt = self.prepare(&format!("DELETE FROM {table} WHERE index_name = ?1;"))?;
+        stmt.bind_text(1, &definition.name)?;
+        stmt.step_done()
+    }
+
+    fn sync_fulltext_entity(
+        &self,
+        target: &str,
+        entity_id: u64,
+        properties: Option<&PropertyMap>,
+    ) -> Result<(), String> {
+        for definition in self
+            .load_fulltext_indexes()?
+            .into_iter()
+            .filter(|definition| definition.target == target)
+        {
+            self.ensure_fulltext_table(&definition.tokenizer)?;
+            let table = fulltext_table(&definition.tokenizer)?;
+            let mut delete = self.prepare(&format!(
+                "DELETE FROM {table} WHERE index_name = ?1 AND entity_id = ?2;"
+            ))?;
+            delete.bind_text(1, &definition.name)?;
+            delete.bind_i64(2, entity_id)?;
+            delete.step_done()?;
+            if let Some(properties) = properties {
+                self.insert_fulltext_entity(&definition, entity_id, properties)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn insert_fulltext_entity(
+        &self,
+        definition: &FullTextIndexDefinition,
+        entity_id: u64,
+        properties: &PropertyMap,
+    ) -> Result<(), String> {
+        let content = definition
+            .properties
+            .iter()
+            .filter_map(|property| match properties.get(property) {
+                Some(crate::models::PropertyValue::String(value)) if !value.trim().is_empty() => {
+                    Some(value.as_str())
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        if content.is_empty() {
+            return Ok(());
+        }
+        let table = fulltext_table(&definition.tokenizer)?;
+        let mut stmt = self.prepare(&format!(
+            "INSERT INTO {table} (index_name, target, entity_id, content) VALUES (?1, ?2, ?3, ?4);"
+        ))?;
+        stmt.bind_text(1, &definition.name)?;
+        stmt.bind_text(2, &definition.target)?;
+        stmt.bind_i64(3, entity_id)?;
+        stmt.bind_text(4, &content)?;
+        stmt.step_done()
     }
 
     pub(crate) fn insert_variable(&self, variable: &VariableRecord) -> Result<(), String> {
@@ -542,6 +807,12 @@ impl SqliteStore {
                 value_text TEXT NOT NULL,
                 PRIMARY KEY (scope, key, value_type, value_text)
             );
+            CREATE TABLE IF NOT EXISTS fulltext_indexes (
+                name TEXT PRIMARY KEY,
+                target TEXT NOT NULL,
+                properties TEXT NOT NULL,
+                tokenizer TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS op_log (
                 seq INTEGER PRIMARY KEY AUTOINCREMENT,
                 op TEXT NOT NULL,
@@ -653,7 +924,8 @@ impl SqliteStore {
         stmt.bind_text(4, &encode_map(&node.properties))?;
         stmt.step_done()?;
         self.insert_node_property_rows(node.id, &node.properties)?;
-        self.append_op("add_node", node.id, &node.external_id)
+        self.append_op("add_node", node.id, &node.external_id)?;
+        self.sync_fulltext_entity("node", node.id, Some(&node.properties))
     }
 
     fn upsert_node_row(&self, node: &NodeRecord) -> Result<(), String> {
@@ -670,7 +942,8 @@ impl SqliteStore {
         delete.bind_i64(1, node.id)?;
         delete.step_done()?;
         self.insert_node_property_rows(node.id, &node.properties)?;
-        self.append_op("update_node", node.id, &node.external_id)
+        self.append_op("update_node", node.id, &node.external_id)?;
+        self.sync_fulltext_entity("node", node.id, Some(&node.properties))
     }
 
     fn upsert_edge_row(&self, edge: &EdgeRecord) -> Result<(), String> {
@@ -688,7 +961,8 @@ impl SqliteStore {
         delete.bind_i64(1, edge.id)?;
         delete.step_done()?;
         self.insert_edge_property_rows(edge.id, &edge.properties)?;
-        self.append_op("update_edge", edge.id, &edge.edge_type)
+        self.append_op("update_edge", edge.id, &edge.edge_type)?;
+        self.sync_fulltext_entity("edge", edge.id, Some(&edge.properties))
     }
 
     fn delete_node_row(&self, node_id: u64) -> Result<(), String> {
@@ -698,7 +972,8 @@ impl SqliteStore {
         let mut node = self.prepare("DELETE FROM nodes WHERE id = ?1;")?;
         node.bind_i64(1, node_id)?;
         node.step_done()?;
-        self.append_op("delete_node", node_id, "")
+        self.append_op("delete_node", node_id, "")?;
+        self.sync_fulltext_entity("node", node_id, None)
     }
 
     fn delete_edge_row(&self, edge_id: u64) -> Result<(), String> {
@@ -708,7 +983,8 @@ impl SqliteStore {
         let mut edge = self.prepare("DELETE FROM edges WHERE id = ?1;")?;
         edge.bind_i64(1, edge_id)?;
         edge.step_done()?;
-        self.append_op("delete_edge", edge_id, "")
+        self.append_op("delete_edge", edge_id, "")?;
+        self.sync_fulltext_entity("edge", edge_id, None)
     }
 
     fn insert_variable_state_rows(
@@ -787,7 +1063,8 @@ impl SqliteStore {
         stmt.bind_text(5, &encode_map(&edge.properties))?;
         stmt.step_done()?;
         self.insert_edge_property_rows(edge.id, &edge.properties)?;
-        self.append_op("add_edge", edge.id, &edge.edge_type)
+        self.append_op("add_edge", edge.id, &edge.edge_type)?;
+        self.sync_fulltext_entity("edge", edge.id, Some(&edge.properties))
     }
 
     fn insert_property_catalog_row(
@@ -1040,6 +1317,40 @@ impl GraphStore for SqliteStore {
         Self::load_next_ids(self)
     }
 
+    fn load_fulltext_indexes(&self) -> Result<Vec<FullTextIndexDefinition>, String> {
+        Self::load_fulltext_indexes(self)
+    }
+
+    fn create_fulltext_index(
+        &self,
+        definition: &FullTextIndexDefinition,
+        nodes: &[NodeRecord],
+        edges: &[EdgeRecord],
+    ) -> Result<(), String> {
+        Self::create_fulltext_index(self, definition, nodes, edges)
+    }
+
+    fn drop_fulltext_index(&self, name: &str) -> Result<(), String> {
+        Self::drop_fulltext_index(self, name)
+    }
+
+    fn rebuild_fulltext_indexes(
+        &self,
+        definitions: &[FullTextIndexDefinition],
+        nodes: &[NodeRecord],
+        edges: &[EdgeRecord],
+    ) -> Result<(), String> {
+        Self::rebuild_fulltext_indexes(self, definitions, nodes, edges)
+    }
+
+    fn fulltext_candidates(
+        &self,
+        definition: &FullTextIndexDefinition,
+        expression: &str,
+    ) -> Result<Vec<u64>, String> {
+        Self::fulltext_candidates(self, definition, expression)
+    }
+
     fn path(&self) -> String {
         self.path.to_string_lossy().into_owned()
     }
@@ -1143,6 +1454,14 @@ impl Drop for Statement<'_> {
                 sqlite3_finalize(self.stmt);
             }
         }
+    }
+}
+
+fn fulltext_table(tokenizer: &str) -> Result<&'static str, String> {
+    match tokenizer {
+        "unicode61" => Ok("fulltext_unicode"),
+        "trigram" => Ok("fulltext_trigram"),
+        _ => Err(format!("unknown full-text tokenizer {tokenizer:?}")),
     }
 }
 

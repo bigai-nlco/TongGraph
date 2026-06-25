@@ -1054,6 +1054,363 @@ fn sqlite_crud_persists_updates_deletes_and_segments() {
     cleanup_db(&path);
 }
 
+#[test]
+fn in_memory_fulltext_search_supports_modes_filters_edges_and_snapshots() {
+    let mut graph = GraphCore::new();
+    let guide = graph
+        .add_node(
+            Some("guide".to_string()),
+            vec!["Document".to_string()],
+            typed_map([
+                ("title", s("Graph Database Guide")),
+                ("content", s("A local embedded graph engine")),
+                ("published", PropertyValue::Bool(true)),
+            ]),
+        )
+        .unwrap();
+    let notes = graph
+        .add_node(
+            Some("notes".to_string()),
+            vec!["Document".to_string()],
+            typed_map([
+                ("title", s("Database Notes")),
+                ("content", s("Relational storage")),
+                ("published", PropertyValue::Bool(false)),
+            ]),
+        )
+        .unwrap();
+    let other = graph
+        .add_node(Some("other".to_string()), Vec::new(), map([]))
+        .unwrap();
+    let edge = graph
+        .add_edge(
+            guide,
+            other,
+            "CITES".to_string(),
+            map([("note", "Graph research collaboration")]),
+        )
+        .unwrap();
+
+    graph
+        .create_fulltext_index(
+            "documents".to_string(),
+            "node".to_string(),
+            vec!["title".to_string(), "content".to_string()],
+            "unicode61".to_string(),
+        )
+        .unwrap();
+    graph
+        .create_fulltext_index(
+            "relations".to_string(),
+            "edge".to_string(),
+            vec!["note".to_string()],
+            "unicode61".to_string(),
+        )
+        .unwrap();
+
+    let all = graph
+        .search_text("documents", "graph database", "all", &fulltext_options())
+        .unwrap();
+    assert_eq!(
+        all.iter().map(|row| row.id).collect::<Vec<_>>(),
+        vec![guide]
+    );
+    assert_eq!(all[0].matched_fields, vec!["title", "content"]);
+
+    let any = graph
+        .search_text("documents", "graph relational", "any", &fulltext_options())
+        .unwrap();
+    assert_eq!(
+        any.iter().map(|row| row.id).collect::<Vec<_>>(),
+        vec![guide, notes]
+    );
+    assert_eq!(
+        graph
+            .search_text(
+                "documents",
+                "graph database guide",
+                "phrase",
+                &fulltext_options(),
+            )
+            .unwrap()[0]
+            .id,
+        guide
+    );
+    assert_eq!(
+        graph
+            .search_text("documents", "grap", "prefix", &fulltext_options())
+            .unwrap()[0]
+            .id,
+        guide
+    );
+
+    let filtered = graph
+        .search_text(
+            "documents",
+            "database",
+            "all",
+            &FullTextSearchOptions {
+                labels: vec!["Document".to_string()],
+                properties: typed_map([("published", PropertyValue::Bool(true))]),
+                ..fulltext_options()
+            },
+        )
+        .unwrap();
+    assert_eq!(filtered.len(), 1);
+    assert_eq!(filtered[0].id, guide);
+
+    let edge_results = graph
+        .search_text(
+            "relations",
+            "research",
+            "all",
+            &FullTextSearchOptions {
+                edge_type: Some("CITES".to_string()),
+                ..fulltext_options()
+            },
+        )
+        .unwrap();
+    assert_eq!(edge_results[0].id, edge);
+    assert_eq!(edge_results[0].kind, "edge");
+
+    let snapshot = graph.snapshot();
+    graph
+        .update_node(
+            guide,
+            None,
+            Vec::new(),
+            Vec::new(),
+            map([
+                ("title", "Completely Different"),
+                ("content", "No matching terms"),
+            ]),
+            Vec::new(),
+        )
+        .unwrap();
+    assert_eq!(
+        snapshot
+            .search_text("documents", "graph", "all", &fulltext_options())
+            .unwrap()[0]
+            .id,
+        guide
+    );
+    assert!(graph
+        .search_text("documents", "graph", "all", &fulltext_options())
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn trigram_fulltext_search_supports_chinese_substrings() {
+    let mut graph = GraphCore::new();
+    let document = graph
+        .add_node(None, Vec::new(), map([("content", "本地图数据库全文检索")]))
+        .unwrap();
+    graph
+        .create_fulltext_index(
+            "chinese".to_string(),
+            "node".to_string(),
+            vec!["content".to_string()],
+            "trigram".to_string(),
+        )
+        .unwrap();
+    assert_eq!(
+        graph
+            .search_text("chinese", "图数据", "all", &fulltext_options())
+            .unwrap()[0]
+            .id,
+        document
+    );
+    assert!(graph
+        .search_text("chinese", "图数", "all", &fulltext_options())
+        .is_err());
+    assert!(graph
+        .search_text("chinese", "图数据", "prefix", &fulltext_options())
+        .is_err());
+}
+
+#[test]
+fn sqlite_fulltext_indexes_persist_and_follow_crud() {
+    let path = temp_db_path("tonggraph-fulltext");
+    let node;
+    let edge;
+    {
+        let mut graph = GraphCore::open(path.to_str().unwrap()).unwrap();
+        node = graph
+            .add_node(
+                Some("doc".to_string()),
+                vec!["Document".to_string()],
+                map([("title", "Embedded Graph Search")]),
+            )
+            .unwrap();
+        let target = graph.add_node(None, Vec::new(), map([])).unwrap();
+        edge = graph
+            .add_edge(
+                node,
+                target,
+                "REFERENCES".to_string(),
+                map([("note", "initial citation")]),
+            )
+            .unwrap();
+        graph
+            .create_fulltext_index(
+                "docs".to_string(),
+                "node".to_string(),
+                vec!["title".to_string()],
+                "unicode61".to_string(),
+            )
+            .unwrap();
+        graph
+            .create_fulltext_index(
+                "edges".to_string(),
+                "edge".to_string(),
+                vec!["note".to_string()],
+                "unicode61".to_string(),
+            )
+            .unwrap();
+    }
+
+    {
+        let mut graph = GraphCore::open(path.to_str().unwrap()).unwrap();
+        assert_eq!(graph.fulltext_indexes().len(), 2);
+        assert_eq!(
+            graph
+                .search_text("docs", "embedded", "all", &fulltext_options())
+                .unwrap()[0]
+                .id,
+            node
+        );
+        graph
+            .update_node(
+                node,
+                None,
+                Vec::new(),
+                Vec::new(),
+                map([("title", "Updated Retrieval")]),
+                Vec::new(),
+            )
+            .unwrap();
+        assert!(graph
+            .search_text("docs", "embedded", "all", &fulltext_options())
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            graph
+                .search_text("docs", "updated", "all", &fulltext_options())
+                .unwrap()[0]
+                .id,
+            node
+        );
+        assert_eq!(
+            graph
+                .search_text("docs", "Updated Retrieval", "phrase", &fulltext_options())
+                .unwrap()[0]
+                .id,
+            node
+        );
+        assert_eq!(
+            graph
+                .search_text("docs", "retr", "prefix", &fulltext_options())
+                .unwrap()[0]
+                .id,
+            node
+        );
+        graph.delete_edge(edge).unwrap();
+        assert!(graph
+            .search_text("edges", "citation", "all", &fulltext_options())
+            .unwrap()
+            .is_empty());
+        graph.rebuild_fulltext_index(None).unwrap();
+        graph.drop_fulltext_index("edges").unwrap();
+        assert_eq!(
+            graph
+                .fulltext_indexes()
+                .into_iter()
+                .map(|definition| definition.name)
+                .collect::<Vec<_>>(),
+            vec!["docs"]
+        );
+    }
+
+    let graph = GraphCore::open(path.to_str().unwrap()).unwrap();
+    assert_eq!(
+        graph
+            .search_text("docs", "retrieval", "all", &fulltext_options())
+            .unwrap()[0]
+            .id,
+        node
+    );
+    assert!(graph
+        .search_text("edges", "citation", "all", &fulltext_options())
+        .is_err());
+    cleanup_db(&path);
+}
+
+#[test]
+fn fulltext_validation_rejects_invalid_definitions_and_filters() {
+    let mut graph = GraphCore::new();
+    graph.add_node(None, Vec::new(), map([])).unwrap();
+    assert!(graph
+        .create_fulltext_index(
+            "bad".to_string(),
+            "mixed".to_string(),
+            vec!["text".to_string()],
+            "unicode61".to_string(),
+        )
+        .is_err());
+    assert!(graph
+        .create_fulltext_index(
+            "bad".to_string(),
+            "node".to_string(),
+            vec![],
+            "unicode61".to_string(),
+        )
+        .is_err());
+    graph
+        .create_fulltext_index(
+            "nodes".to_string(),
+            "node".to_string(),
+            vec!["text".to_string()],
+            "unicode61".to_string(),
+        )
+        .unwrap();
+    assert!(graph
+        .search_text(
+            "nodes",
+            "text",
+            "all",
+            &FullTextSearchOptions {
+                edge_type: Some("LINK".to_string()),
+                ..fulltext_options()
+            },
+        )
+        .is_err());
+    assert!(graph
+        .search_text("nodes", "text", "bad", &fulltext_options(),)
+        .is_err());
+    assert!(graph
+        .search_text(
+            "nodes",
+            "text",
+            "all",
+            &FullTextSearchOptions {
+                limit: 0,
+                ..fulltext_options()
+            },
+        )
+        .is_err());
+}
+
+fn fulltext_options() -> FullTextSearchOptions {
+    FullTextSearchOptions {
+        labels: Vec::new(),
+        edge_type: None,
+        properties: PropertyMap::new(),
+        limit: 20,
+        offset: 0,
+    }
+}
+
 fn map<const N: usize>(values: [(&str, &str); N]) -> PropertyMap {
     values
         .into_iter()

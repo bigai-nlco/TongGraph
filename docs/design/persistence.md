@@ -12,6 +12,7 @@ SQLite tables are initialized in `src/sqlite.rs` and cover:
 - node and edge property rows
 - property key/value catalogs
 - operation log entries
+- full-text index definitions and SQLite FTS5 derived rows
 - variables and ordered variable states
 - factor metadata and factor tables
 - latest posteriors
@@ -78,6 +79,8 @@ thresholds in `src/core/lifecycle.rs`.
   transaction so removed values do not remain indexed.
 - Monotonic next-node and next-edge IDs are stored in metadata so deleted IDs
   are not reused after reopening a graph.
+- Full-text definitions are durable. FTS5 rows are synchronized inside graph
+  mutation transactions and rebuilt from graph records whenever a graph opens.
 - Properties are limited to Python-compatible scalar values: `bool`, `int`,
   finite `float`, and `str`.
 - Local `.db`, `.db-shm`, `.db-wal`, and `.segments/` artifacts are ignored by

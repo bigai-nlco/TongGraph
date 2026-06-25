@@ -23,6 +23,7 @@ impl GraphCore {
             node_property_value_index: HashMap::new(),
             edge_property_key_index: HashMap::new(),
             edge_property_value_index: HashMap::new(),
+            fulltext_indexes: HashMap::new(),
             next_node_id: 0,
             next_edge_id: 0,
             next_variable_id: 0,
@@ -73,6 +74,12 @@ impl GraphCore {
         for trace in store.load_traces()? {
             core.insert_loaded_trace(trace)?;
         }
+        let fulltext_indexes = store.load_fulltext_indexes()?;
+        store.rebuild_fulltext_indexes(&fulltext_indexes, &core.nodes(), &core.edges())?;
+        core.fulltext_indexes = fulltext_indexes
+            .into_iter()
+            .map(|definition| (definition.name.clone(), definition))
+            .collect();
         let (next_node_id, next_edge_id) = store.load_next_ids()?;
         if let Some(next_node_id) = next_node_id {
             core.next_node_id = core.next_node_id.max(next_node_id);
@@ -166,6 +173,7 @@ impl GraphCore {
             node_property_value_index: self.node_property_value_index.clone(),
             edge_property_key_index: self.edge_property_key_index.clone(),
             edge_property_value_index: self.edge_property_value_index.clone(),
+            fulltext_indexes: self.fulltext_indexes.clone(),
             next_node_id: self.next_node_id,
             next_edge_id: self.next_edge_id,
             next_variable_id: self.next_variable_id,

@@ -145,8 +145,10 @@ cycle = {
 ```
 
 The engine covers one connected path pattern. It does not yet implement
-multi-pattern joins, optional matches, aggregation, sorting, full-text lookup,
-vector retrieval, or a Cypher parser.
+multi-pattern joins, optional matches, aggregation, sorting, or vector retrieval.
+Full-text retrieval is available separately through named indexes and
+`Graph.search_text()`; it is not embedded in this DSL. Cypher compatibility is
+documented separately.
 
 ## Natural-Language Compilation Hook
 

@@ -2,11 +2,12 @@ use super::compute::{
     compute_jobs_from_py, compute_result_to_py, scores_to_py, shortest_path_to_py,
 };
 use super::cypher::{params_from_py, PyCypherResult};
-use super::properties::optional_property_value_from_py;
+use super::fulltext::{definitions_to_py, search_results_to_py};
+use super::properties::{optional_property_value_from_py, properties_from_py};
 use super::query::{query_rows_to_py, query_schema_to_py, query_spec_from_py};
 use super::records::{PyEdge, PyEvidence, PyFactor, PyNode, PyTrace, PyVariable};
 use super::to_py_value_error;
-use crate::core::GraphCore;
+use crate::core::{FullTextSearchOptions, GraphCore};
 use crate::cypher;
 use pyo3::exceptions::PyKeyError;
 use pyo3::prelude::*;
@@ -25,6 +26,38 @@ impl PyGraphSnapshot {
 
 #[pymethods]
 impl PyGraphSnapshot {
+    fn fulltext_indexes(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        definitions_to_py(py, self.core.fulltext_indexes())
+    }
+
+    #[pyo3(signature = (index_name, query, mode="all", labels=None, edge_type=None, properties=None, limit=20, offset=0))]
+    fn search_text(
+        &self,
+        py: Python<'_>,
+        index_name: String,
+        query: String,
+        mode: &str,
+        labels: Option<Vec<String>>,
+        edge_type: Option<String>,
+        properties: Option<&Bound<'_, PyDict>>,
+        limit: usize,
+        offset: usize,
+    ) -> PyResult<Py<PyAny>> {
+        let options = FullTextSearchOptions {
+            labels: labels.unwrap_or_default(),
+            edge_type,
+            properties: properties_from_py(properties)?,
+            limit,
+            offset,
+        };
+        search_results_to_py(
+            py,
+            self.core
+                .search_text(&index_name, &query, mode, &options)
+                .map_err(to_py_value_error)?,
+        )
+    }
+
     fn node_count(&self) -> usize {
         self.core.node_count()
     }

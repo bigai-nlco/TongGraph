@@ -200,6 +200,24 @@ class GraphSnapshot:
     It supports retrieval and compute methods but not mutation methods.
     """
 
+    def fulltext_indexes(self) -> list[dict[str, Any]]:
+        """Return named full-text index definitions ordered by name."""
+        ...
+
+    def search_text(
+        self,
+        index_name: str,
+        query: str,
+        mode: str = "all",
+        labels: Sequence[str] | None = None,
+        edge_type: str | None = None,
+        properties: Properties | None = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """Search a named full-text index."""
+        ...
+
     def node_count(self) -> int:
         """Return the number of live nodes."""
         ...
@@ -490,6 +508,42 @@ class Graph(GraphSnapshot):
 
     def delete_edge(self, edge_id: int) -> None:
         """Delete an edge."""
+        ...
+
+    def create_fulltext_index(
+        self,
+        name: str,
+        properties: Sequence[str],
+        target: str = "node",
+        tokenizer: str = "unicode61",
+    ) -> None:
+        """Create a named node or edge full-text index."""
+        ...
+
+    def drop_fulltext_index(self, name: str) -> None:
+        """Drop a full-text index and its derived rows."""
+        ...
+
+    def fulltext_indexes(self) -> list[dict[str, Any]]:
+        """Return named full-text index definitions ordered by name."""
+        ...
+
+    def rebuild_fulltext_index(self, name: str | None = None) -> None:
+        """Rebuild one full-text index or every index."""
+        ...
+
+    def search_text(
+        self,
+        index_name: str,
+        query: str,
+        mode: str = "all",
+        labels: Sequence[str] | None = None,
+        edge_type: str | None = None,
+        properties: Properties | None = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """Search a named full-text index."""
         ...
 
     def compact(self) -> None:

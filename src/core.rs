@@ -2,6 +2,7 @@ mod adjacency;
 mod algorithms;
 mod direction;
 mod entities;
+mod fulltext;
 mod inference;
 mod lifecycle;
 mod metadata;
@@ -15,6 +16,7 @@ mod traversal;
 mod tests;
 
 pub(crate) use algorithms::{ComputeJob, ComputeResult, ShortestPath};
+pub(crate) use fulltext::FullTextSearchOptions;
 pub(crate) use inference::{ActiveSubgraph, BeliefPropagationResult};
 pub(crate) use queries::{
     EdgePattern, NodePattern, PropertyConstraint, PropertyOperator, QueryDirection, QueryElement,
@@ -22,8 +24,8 @@ pub(crate) use queries::{
 };
 
 use crate::models::{
-    EdgeRecord, EvidenceRecord, FactorRecord, FactorTableRecord, NodeRecord, TraceRecord,
-    VariableRecord,
+    EdgeRecord, EvidenceRecord, FactorRecord, FactorTableRecord, FullTextIndexDefinition,
+    NodeRecord, TraceRecord, VariableRecord,
 };
 use crate::sqlite::GraphStore;
 use properties::PropertyIndexKey;
@@ -49,6 +51,7 @@ pub(crate) struct GraphCore {
     node_property_value_index: HashMap<PropertyIndexKey, BTreeSet<u64>>,
     edge_property_key_index: HashMap<String, BTreeSet<u64>>,
     edge_property_value_index: HashMap<PropertyIndexKey, BTreeSet<u64>>,
+    fulltext_indexes: HashMap<String, FullTextIndexDefinition>,
     next_node_id: u64,
     next_edge_id: u64,
     next_variable_id: u64,

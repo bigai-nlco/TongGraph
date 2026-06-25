@@ -132,6 +132,166 @@ def test_sqlite_backed_graph_reopens_with_indexes(tmp_path: Path) -> None:
     assert reopened.get_trace(trace).payload == {"step": 1, "note": "initial"}
 
 
+
+def test_fulltext_search_in_memory_nodes_edges_filters_and_snapshot() -> None:
+    graph = Graph()
+    guide = graph.add_node(
+        "guide",
+        labels=["Document"],
+        properties={
+            "title": "Graph Database Guide",
+            "content": "A local embedded graph engine",
+            "published": True,
+        },
+    )
+    notes = graph.add_node(
+        "notes",
+        labels=["Document"],
+        properties={"title": "Database Notes", "content": "Relational storage"},
+    )
+    target = graph.add_node("target")
+    edge = graph.add_edge(
+        guide,
+        target,
+        "CITES",
+        properties={"note": "Graph research collaboration"},
+    )
+
+    graph.create_fulltext_index(
+        "documents",
+        target="node",
+        properties=["title", "content"],
+        tokenizer="unicode61",
+    )
+    graph.create_fulltext_index("relations", ["note"], target="edge")
+    assert graph.fulltext_indexes() == [
+        {
+            "name": "documents",
+            "target": "node",
+            "properties": ["title", "content"],
+            "tokenizer": "unicode61",
+        },
+        {
+            "name": "relations",
+            "target": "edge",
+            "properties": ["note"],
+            "tokenizer": "unicode61",
+        },
+    ]
+
+    results = graph.search_text(
+        "documents",
+        "graph database",
+        labels=["Document"],
+        properties={"published": True},
+    )
+    assert [result["id"] for result in results] == [guide]
+    assert results[0]["kind"] == "node"
+    assert results[0]["matched_fields"] == ["title", "content"]
+    assert 0.0 < results[0]["score"] <= 1.0
+    assert [
+        result["id"]
+        for result in graph.search_text("documents", "graph relational", mode="any")
+    ] == [guide, notes]
+    assert [
+        result["id"]
+        for result in graph.search_text(
+            "documents", "graph relational", mode="any", limit=1, offset=1
+        )
+    ] == [notes]
+    assert graph.search_text("documents", "grap", mode="prefix")[0]["id"] == guide
+    assert graph.search_text(
+        "relations", "research", edge_type="CITES"
+    )[0]["id"] == edge
+
+    snapshot = graph.snapshot()
+    subgraph = graph.subgraph([guide, target])
+    assert subgraph.search_text("documents", "graph")[0]["id"] == guide
+    graph.update_node(
+        guide,
+        set_properties={"title": "Different", "content": "No matching words"},
+    )
+    assert snapshot.search_text("documents", "graph")[0]["id"] == guide
+    assert graph.search_text("documents", "graph") == []
+
+    with pytest.raises(ValueError, match="edge_type"):
+        graph.search_text("documents", "database", edge_type="CITES")
+    with pytest.raises(ValueError, match="already exists"):
+        graph.create_fulltext_index("documents", ["title"])
+    graph.drop_fulltext_index("relations")
+    assert [index["name"] for index in graph.fulltext_indexes()] == ["documents"]
+
+
+def test_sqlite_fulltext_search_reopens_rebuilds_and_supports_trigram(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "fulltext.db"
+    graph = Graph(str(db_path))
+    document = graph.add_node(
+        "doc",
+        labels=["Document"],
+        properties={"content": "本地图数据库全文检索", "status": "published"},
+    )
+    graph.create_fulltext_index(
+        "chinese",
+        target="node",
+        properties=["content"],
+        tokenizer="trigram",
+    )
+    assert graph.search_text(
+        "chinese", "图数据", properties={"status": "published"}
+    )[0]["id"] == document
+    with pytest.raises(ValueError, match="at least 3"):
+        graph.search_text("chinese", "图数")
+    del graph
+
+    with connect(db_path) as connection:
+        definitions = connection.execute(
+            "SELECT name, target, properties, tokenizer FROM fulltext_indexes"
+        ).fetchall()
+        assert definitions == [("chinese", "node", "content", "trigram")]
+        connection.execute("DROP TABLE fulltext_trigram")
+
+    reopened = Graph(str(db_path))
+    assert reopened.search_text("chinese", "图数据")[0]["id"] == document
+    reopened.update_node(document, set_properties={"content": "本地向量检索"})
+    assert reopened.search_text("chinese", "图数据") == []
+    assert reopened.search_text("chinese", "向量检")[0]["id"] == document
+    reopened.update_node(document, set_properties={"content": 7})
+    assert reopened.search_text("chinese", "向量检") == []
+    reopened.update_node(document, set_properties={"content": "恢复向量检索"})
+    assert reopened.search_text("chinese", "向量检")[0]["id"] == document
+    reopened.rebuild_fulltext_index("chinese")
+    reopened.delete_node(document)
+    assert reopened.search_text("chinese", "向量检") == []
+
+
+def test_sqlite_fulltext_rebuilds_corrupt_shadow_table(tmp_path: Path) -> None:
+    db_path = tmp_path / "fulltext-corrupt.db"
+    graph = Graph(str(db_path))
+    document = graph.add_node(properties={"text": "graph database recovery"})
+    other = graph.add_node(properties={"text": "secondary search content"})
+    graph.create_fulltext_index("documents", ["text"])
+    graph.create_fulltext_index("secondary", ["text"])
+    del graph
+
+    with connect(db_path) as connection:
+        connection.execute("DROP TABLE fulltext_unicode_data")
+
+    reopened = Graph(str(db_path))
+    assert reopened.search_text("documents", "graph")[0]["id"] == document
+    assert reopened.search_text("secondary", "secondary")[0]["id"] == other
+    with connect(db_path) as connection:
+        shadow_tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master "
+                "WHERE name LIKE 'fulltext_unicode_%'"
+            )
+        }
+    assert "fulltext_unicode_data" in shadow_tables
+
+
 def test_query_layer_structured_queries_snapshots_reopen_and_nl(tmp_path: Path) -> None:
     db_path = tmp_path / "query.db"
     graph = Graph(str(db_path))

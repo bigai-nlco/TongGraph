@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Added
+
+- Adds named full-text indexes for node and edge properties, including Unicode
+  word search, trigram substring search, filters, persistence, and snapshot reads.
+
 ### Changed
 
 - Completes the embedded Cypher CRUD subset with `SET`, `REMOVE`, `DELETE`,

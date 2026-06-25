@@ -1,5 +1,6 @@
 mod compute;
 mod cypher;
+mod fulltext;
 mod graph;
 mod inference;
 mod properties;

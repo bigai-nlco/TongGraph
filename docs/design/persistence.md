@@ -23,7 +23,7 @@ SQLite tables are initialized in `src/sqlite.rs` and cover:
 !!! warning "Pre-v1 storage compatibility"
     TongGraph does not promise stable SQLite tables or segment formats before
     v1. Treat local databases and `.segments/` directories as disposable
-    pre-alpha artifacts unless your application owns its own export path.
+    0.x artifacts unless your application owns its own export path.
 
 ## Segment Sidecars
 

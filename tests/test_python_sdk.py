@@ -506,3 +506,405 @@ def test_belief_propagation_rejects_invalid_domains_and_potentials() -> None:
         graph.add_cpd(child, [parent], [90.0, 10.0, 2.0, 8.0])
     with pytest.raises(ValueError, match="state"):
         graph.belief_propagation([variable], evidence={variable: "missing"})
+
+
+def test_mutation_validation_and_lookup_errors_surface_cleanly() -> None:
+    graph = Graph()
+    node = graph.add_node("entity")
+
+    invalid_operations = [
+        (lambda: graph.add_node("entity"), 'external_id "entity" already exists'),
+        (lambda: graph.add_node(""), "external_id cannot be empty"),
+        (lambda: graph.add_node(labels=[""]), "label cannot be empty"),
+        (lambda: graph.add_node(properties={"": "value"}), "property key cannot be empty"),
+        (
+            lambda: graph.add_node(properties={"payload": []}),
+            "property values must be str, int, float, or bool",
+        ),
+        (
+            lambda: graph.add_node(properties={"score": float("nan")}),
+            "float property values must be finite",
+        ),
+        (lambda: graph.add_edge(node, 999, "LINK"), "node 999 not found"),
+        (lambda: graph.add_edge(node, node, ""), "edge_type cannot be empty"),
+    ]
+
+    for operation, message in invalid_operations:
+        with pytest.raises(ValueError, match=message):
+            operation()
+
+    with pytest.raises(KeyError, match="node 999 not found"):
+        graph.get_node(999)
+    with pytest.raises(KeyError, match="edge 999 not found"):
+        graph.get_edge(999)
+
+
+def test_traversal_direction_type_filters_and_snapshot_read_only() -> None:
+    graph = Graph()
+    alice = graph.add_node("alice")
+    bob = graph.add_node("bob")
+    carol = graph.add_node("carol")
+    dave = graph.add_node("dave")
+    graph.add_edge(alice, bob, "KNOWS")
+    graph.add_edge(carol, bob, "KNOWS")
+    graph.add_edge(bob, dave, "LIKES")
+    graph.add_edge(dave, alice, "KNOWS")
+
+    assert graph.neighbors(bob, direction="out") == [dave]
+    assert graph.neighbors(bob, direction="in", edge_type="KNOWS") == [alice, carol]
+    assert graph.neighbors(bob, direction="both") == [dave, alice, carol]
+    assert graph.k_hop(bob, 2, direction="in", edge_type="KNOWS") == [
+        alice,
+        carol,
+        dave,
+    ]
+    assert graph.frontier([bob, bob], 0) == [bob]
+    assert graph.frontier([bob], 2, direction="in", edge_type="KNOWS") == [dave]
+    assert graph.bfs(bob, direction="in", edge_type="KNOWS") == [bob, alice, carol, dave]
+    assert graph.shortest_path(dave, bob, direction="out", edge_type="KNOWS") == {
+        "nodes": [dave, alice, bob],
+        "distance": 2.0,
+    }
+    assert graph.connected_components(edge_type="LIKES") == [[alice], [bob, dave], [carol]]
+
+    snapshot = graph.snapshot()
+    assert not hasattr(snapshot, "add_node")
+    graph.add_node("later")
+    assert snapshot.node_count() == 4
+
+    with pytest.raises(ValueError, match="direction must be"):
+        graph.neighbors(alice, direction="sideways")
+
+
+def test_compute_batch_validation_and_subgraph_snapshot_result() -> None:
+    graph = Graph()
+    a = graph.add_node("a")
+    b = graph.add_node("b")
+    c = graph.add_node("c")
+    graph.add_edge(a, b, "LINK", properties={"weight": 2.0})
+    graph.add_edge(b, c, "LINK", properties={"weight": 3.0})
+
+    results = graph.compute_batch(
+        [
+            {"op": "subgraph", "nodes": [a, b], "edge_type": "LINK"},
+            {"op": "random_walk", "start": a, "steps": 2, "edge_type": "LINK", "seed": 11},
+        ]
+    )
+    subgraph = results[0]
+    assert subgraph.node_count() == 2
+    assert subgraph.edge_count() == 1
+    assert subgraph.neighbors(a, edge_type="LINK") == [b]
+    assert results[1] == [a, b, c]
+
+    invalid_batches = [
+        ({"op": "bfs"}, "compute_batch jobs must be a list"),
+        ([{"op": "missing"}], 'job 0 has unknown op "missing"'),
+        ([{"op": "bfs", "start": 999}], "job 0: node 999 not found"),
+        ([{"op": "random_walk", "start": a}], 'job 0 missing "steps"'),
+    ]
+    for jobs, message in invalid_batches:
+        with pytest.raises(ValueError, match=message):
+            graph.compute_batch(jobs)  # type: ignore[arg-type]
+
+
+def test_query_layer_directions_repeated_aliases_defaults_and_validation() -> None:
+    graph = Graph()
+    alice = graph.add_node("alice", labels=["Person"])
+    bob = graph.add_node("bob", labels=["Person"])
+    carol = graph.add_node("carol", labels=["Person"])
+    alice_to_bob = graph.add_edge(alice, bob, "KNOWS", properties={"rank": 1})
+    bob_to_carol = graph.add_edge(bob, carol, "KNOWS", properties={"rank": 2})
+    carol_to_alice = graph.add_edge(carol, alice, "KNOWS", properties={"rank": 3})
+
+    assert graph.query(
+        {
+            "match": [
+                {"node": "target", "id": alice},
+                {"edge": "rel", "type": "KNOWS", "direction": "in"},
+                {"node": "source"},
+            ],
+            "return": ["source", "rel"],
+        }
+    ) == [{"rel": carol_to_alice, "source": carol}]
+
+    assert graph.query(
+        {
+            "match": [
+                {"node": "center", "id": bob},
+                {"edge": "rel", "type": "KNOWS", "direction": "both"},
+                {"node": "other"},
+            ],
+            "return": ["other", "rel"],
+        }
+    ) == [
+        {"other": carol, "rel": bob_to_carol},
+        {"other": alice, "rel": alice_to_bob},
+    ]
+
+    assert graph.query(
+        {
+            "match": [
+                {"node": "a", "id": alice},
+                {"edge": "ab", "type": "KNOWS"},
+                {"node": "b"},
+                {"edge": "bc", "type": "KNOWS"},
+                {"node": "c"},
+                {"edge": "ca", "type": "KNOWS"},
+                {"node": "a"},
+            ],
+            "return": ["a", "b", "c"],
+        }
+    ) == [{"a": alice, "b": bob, "c": carol}]
+
+    assert graph.query(
+        {
+            "match": [
+                {"node": "a", "id": alice},
+                {"edge": "e", "type": "KNOWS"},
+                {"node": "b", "id": bob},
+                {"edge": "e", "type": "KNOWS", "direction": "in"},
+                {"node": "a", "id": alice},
+            ],
+            "return": ["e"],
+        }
+    ) == [{"e": alice_to_bob}]
+
+    assert graph.query(
+        {
+            "match": [
+                {"node": "a", "id": alice},
+                {"edge": "rel", "type": "KNOWS"},
+                {"node": "b"},
+            ],
+        }
+    ) == [{"a": alice, "b": bob, "rel": alice_to_bob}]
+
+    invalid_queries = [
+        ([], "query spec must be a dict"),
+        ({"match": [{"node": "n", "id": alice}], "return": ["missing"]}, "return alias"),
+        (
+            {"match": [{"node": "same"}, {"edge": "same", "type": "KNOWS"}, {"node": "n"}]},
+            'alias "same" cannot refer to both nodes and edges',
+        ),
+        (
+            {"match": [{"node": "n", "where": [{"property": "rank", "op": "in", "value": 1}]}]},
+            "op 'in' requires a list value",
+        ),
+    ]
+    for spec, message in invalid_queries:
+        with pytest.raises(ValueError, match=message):
+            graph.query(spec)  # type: ignore[arg-type]
+
+    strict_queries = [
+        ({"match": [{"node": "n"}], "bogus": True}, "unknown field"),
+        ({"match": [{"node": "n", "label": ["Person"]}]}, "unknown field"),
+        (
+            {"match": [{"node": "a"}, {"edge": "e", "edge_type": "KNOWS"}, {"node": "b"}]},
+            "unknown field",
+        ),
+        (
+            {
+                "match": [
+                    {
+                        "node": "n",
+                        "where": [
+                            {
+                                "property": "rank",
+                                "op": "eq",
+                                "value": 1,
+                                "extra": True,
+                            }
+                        ],
+                    }
+                ]
+            },
+            "unknown field",
+        ),
+    ]
+    for spec, message in strict_queries:
+        with pytest.raises(ValueError, match=message):
+            graph.query(spec)
+
+    schema = graph.query_schema()
+    assert schema["top_level_fields"] == ["match", "return", "limit"]
+    assert schema["node_pattern"]["allowed_fields"] == [
+        "node",
+        "id",
+        "external_id",
+        "labels",
+        "properties",
+        "where",
+    ]
+    assert schema["edge_pattern"]["allowed_fields"] == [
+        "edge",
+        "id",
+        "type",
+        "direction",
+        "properties",
+        "where",
+    ]
+
+
+def test_sqlite_reopen_preserves_compacted_directional_adjacency(tmp_path: Path) -> None:
+    db_path = tmp_path / "directional.db"
+    graph = Graph(str(db_path))
+    alice = graph.add_node("alice")
+    bob = graph.add_node("bob")
+    carol = graph.add_node("carol")
+    dave = graph.add_node("dave")
+    graph.add_edge(alice, bob, "FOLLOWS")
+    graph.add_edge(carol, bob, "FOLLOWS")
+    graph.add_edge(bob, dave, "LIKES")
+    graph.compact()
+    del graph
+
+    reopened = Graph(str(db_path))
+    assert reopened.neighbors(bob, direction="in", edge_type="FOLLOWS") == [alice, carol]
+    assert reopened.neighbors(bob, direction="both") == [dave, alice, carol]
+    assert reopened.bfs(bob, direction="in") == [bob, alice, carol]
+    assert reopened.query(
+        {
+            "match": [
+                {"node": "target", "id": bob},
+                {"edge": "rel", "type": "FOLLOWS", "direction": "in"},
+                {"node": "source"},
+            ],
+            "return": ["source", "rel"],
+        }
+    ) == [{"rel": 0, "source": alice}, {"rel": 1, "source": carol}]
+
+
+def test_sqlite_recovers_from_unusable_segment_sidecars(tmp_path: Path) -> None:
+    def create_graph(name: str) -> Path:
+        db_path = tmp_path / f"{name}.db"
+        graph = Graph(str(db_path))
+        source = graph.add_node("source")
+        target = graph.add_node("target")
+        graph.add_edge(source, target, "LINK")
+        graph.compact()
+        del graph
+        return db_path
+
+    bad_manifest = create_graph("bad_manifest")
+    manifest_path = Path(f"{bad_manifest}.segments") / "manifest.txt"
+    manifest_path.write_text("bad manifest", encoding="utf-8")
+    reopened = Graph(str(bad_manifest))
+    assert reopened.neighbors(0, edge_type="LINK") == [1]
+    assert "version=tonggraph-segment-v1" in manifest_path.read_text(encoding="utf-8")
+
+    missing_segment = create_graph("missing_segment")
+    segment_path = Path(f"{missing_segment}.segments") / "segment-v1.bin"
+    segment_path.unlink()
+    reopened = Graph(str(missing_segment))
+    assert reopened.neighbors(0, edge_type="LINK") == [1]
+    assert segment_path.exists()
+
+    corrupt_segment = create_graph("corrupt_segment")
+    segment_path = Path(f"{corrupt_segment}.segments") / "segment-v1.bin"
+    segment_path.write_bytes(b"not a segment")
+    reopened = Graph(str(corrupt_segment))
+    assert reopened.neighbors(0, edge_type="LINK") == [1]
+
+
+def test_sqlite_stale_handle_requires_refresh(tmp_path: Path) -> None:
+    db_path = tmp_path / "multi_handle.db"
+    first = Graph(str(db_path))
+    assert first.add_node("a") == 0
+
+    second = Graph(str(db_path))
+    assert second.add_node("b") == 1
+
+    with pytest.raises(ValueError, match="call refresh\\(\\) before writing"):
+        first.add_node("c")
+    assert first.get_node_id("b") is None
+
+    first.refresh()
+    assert first.get_node_id("b") == 1
+    assert first.add_node("c") == 2
+
+    with pytest.raises(ValueError, match="SQLite-backed"):
+        Graph().refresh()
+
+
+def test_bulk_ingest_scans_reopen_and_rollback(tmp_path: Path) -> None:
+    db_path = tmp_path / "bulk.db"
+    graph = Graph(str(db_path))
+    node_ids = graph.add_nodes(
+        [
+            {"external_id": "a", "labels": ["Entity"], "properties": {"rank": 1}},
+            {"external_id": "b", "labels": ["Entity"], "properties": {"rank": 2}},
+        ]
+    )
+    assert node_ids == [0, 1]
+    edge_ids = graph.add_edges(
+        [
+            {
+                "source": node_ids[0],
+                "target": node_ids[1],
+                "edge_type": "LINK",
+                "properties": {"probability": 0.5},
+            }
+        ]
+    )
+    assert edge_ids == [0]
+    assert graph.node_ids() == [0, 1]
+    assert graph.edge_ids() == [0]
+    assert [node.external_id for node in graph.nodes()] == ["a", "b"]
+    assert [edge.edge_type for edge in graph.edges()] == ["LINK"]
+
+    with pytest.raises(ValueError, match='external_id "dup" already exists'):
+        graph.add_nodes([{"external_id": "dup"}, {"external_id": "dup"}])
+    assert graph.node_count() == 2
+
+    with pytest.raises(ValueError, match="node 999 not found"):
+        graph.add_edges(
+            [
+                {"source": node_ids[0], "target": node_ids[1], "edge_type": "LINK"},
+                {"source": 999, "target": node_ids[1], "edge_type": "LINK"},
+            ]
+        )
+    assert graph.edge_count() == 1
+
+    snapshot = graph.snapshot()
+    assert snapshot.node_ids() == [0, 1]
+    assert snapshot.edge_ids() == [0]
+    del graph
+
+    reopened = Graph(str(db_path))
+    assert reopened.node_ids() == [0, 1]
+    assert reopened.edge_ids() == [0]
+    assert [node.external_id for node in reopened.nodes()] == ["a", "b"]
+    assert [edge.edge_type for edge in reopened.edges()] == ["LINK"]
+
+
+def test_categorical_belief_propagation_uses_public_python_api_ordering() -> None:
+    graph = Graph()
+    parent = graph.add_variable("binary", prior={"false": 0.5, "true": 0.5})
+    child = graph.add_variable("categorical", states=["sun", "rain", "snow"])
+    graph.add_cpd(child, [parent], [0.7, 0.2, 0.1, 0.1, 0.3, 0.6])
+
+    result = graph.belief_propagation(
+        [child],
+        evidence={parent: "true"},
+        damping=0.0,
+        tolerance=1e-12,
+    )
+
+    assert result["converged"] is True
+    assert result["warnings"] == []
+    assert result["diagnostics"]["active_variables"] == 2
+    assert result["diagnostics"]["active_factors"] == 1
+    assert result["beliefs"][child]["sun"] == pytest.approx(0.1)
+    assert result["beliefs"][child]["rain"] == pytest.approx(0.3)
+    assert result["beliefs"][child]["snow"] == pytest.approx(0.6)
+    assert graph.posterior(child) == {"rain": 1 / 3, "snow": 1 / 3, "sun": 1 / 3}
+
+    stopped = graph.belief_propagation(
+        [child],
+        evidence={parent: "true"},
+        damping=0.0,
+        max_iters=0,
+    )
+    assert stopped["converged"] is False
+    assert stopped["diagnostics"]["max_iters"] == 0
+    assert any("did not converge" in warning for warning in stopped["warnings"])

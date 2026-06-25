@@ -1,9 +1,7 @@
 site_name: TongGraph
-site_description: Python-first documentation for the TongGraph embedded graph compute database.
+site_description: TongGraph embedded graph compute database.
 site_author: BIGAI TongAgents Team
 strict: true
-exclude_docs: |
-  codebase/**
 
 theme:
   name: material
@@ -42,7 +40,15 @@ nav:
   - Overview:
       - Overview: index.md
       - Core Concepts: core-concepts.md
-      - Quickstart: quickstart.md
+      - Changelog: changelog.md
+  - Quickstart:
+      - Quickstart: quickstart/index.md
+      - Property Graph Basics: quickstart/property-graph-basics.md
+      - GraphRAG Retrieval: quickstart/graphrag-retrieval.md
+      - AI Memory Session Graph: quickstart/ai-memory-session-graph.md
+      - Local Persistence And Reopen: quickstart/local-persistence-reopen.md
+      - Structured Query From Natural Language: quickstart/structured-query-nl.md
+      - Probabilistic Inference: quickstart/probabilistic-inference.md
   - API:
       - API: api/index.md
       - Graph: api/graph.md

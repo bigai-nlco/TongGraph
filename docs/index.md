@@ -16,23 +16,18 @@ Use it when you want graph retrieval, graph algorithms, and lightweight belief
 updates in-process rather than behind a separate graph database service.
 </p>
 
-[Quickstart](quickstart.md){ .md-button .md-button--primary }
+[Quickstart](quickstart/index.md){ .md-button .md-button--primary }
 [API Reference](./api/index.md){ .md-button }
 
 <div class="tg-pill-row" markdown>
 <span class="tg-pill">Rust core</span>
 <span class="tg-pill">Python API</span>
 <span class="tg-pill">CSR/CSC adjacency</span>
-<span class="tg-pill">Structured queries</span>
-<span class="tg-pill">Cypher subset</span>
+<span class="tg-pill">Cypher compatible</span>
 <span class="tg-pill">Belief propagation</span>
 </div>
 
 </div>
-
-!!! warning "Pre-alpha project"
-    The repository describes TongGraph as pre-alpha. The public API, storage
-    format, and query interfaces are expected to evolve.
 
 ## Goal
 
@@ -87,7 +82,7 @@ applications, research tools, and agent systems.
 
 </div>
 
-## Minimal Example
+## Quick Start
 
 ```python
 from tonggraph import Graph
@@ -130,7 +125,7 @@ TongGraph keeps three ideas separate:
 
 ## Where To Go Next
 
-- Start with [Quickstart](quickstart.md) for installation and first graph.
+- Start with [Quickstart](quickstart/index.md) for installation and first graph.
 - Read [Core Concepts](core-concepts.md) for storage, architecture, data model,
   scope, and probabilistic model.
 - Use [Examples](examples/index.md) for expected behavior and live outputs.

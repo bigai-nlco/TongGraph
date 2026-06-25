@@ -4,6 +4,12 @@ version = "0.1.0"
 edition = "2021"
 description = "A lightweight embedded graph compute database for large sparse graph networks."
 license = "Apache-2.0"
+homepage = "https://bigai-nlco.github.io/TongGraph/"
+repository = "https://github.com/bigai-nlco/TongGraph"
+documentation = "https://bigai-nlco.github.io/TongGraph/"
+readme = "README.md"
+keywords = ["graph", "pyo3", "inference", "memory", "agents"]
+categories = ["data-structures", "database-implementations"]
 
 [lib]
 name = "_tonggraph"

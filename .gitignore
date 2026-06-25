@@ -13,3 +13,5 @@
 *.segments/
 output/
 docs/codebase/
+.DS_Store
+AGENTS.md

@@ -310,6 +310,25 @@ impl GraphCore {
             subgraph.insert_loaded_edge(edge.clone())?;
         }
         subgraph.fulltext_indexes = self.fulltext_indexes.clone();
+        subgraph.vector_indexes = self.vector_indexes.clone();
+        for definition in subgraph.vector_indexes.values() {
+            let retained = self
+                .vectors
+                .get(&definition.name)
+                .into_iter()
+                .flat_map(|vectors| vectors.iter())
+                .filter(|(entity_id, _)| match definition.target.as_str() {
+                    "node" => selected.contains(entity_id),
+                    "edge" => subgraph
+                        .edges
+                        .get(**entity_id as usize)
+                        .is_some_and(Option::is_some),
+                    _ => false,
+                })
+                .map(|(entity_id, vector)| (*entity_id, vector.clone()))
+                .collect();
+            subgraph.vectors.insert(definition.name.clone(), retained);
+        }
         subgraph.compact_segments()?;
         Ok(subgraph)
     }

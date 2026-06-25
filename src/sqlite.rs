@@ -5,7 +5,8 @@ use crate::codec::{
 use crate::core::segment::ComputeSegment;
 use crate::models::{
     EdgeRecord, EvidenceRecord, FactorRecord, FactorTableRecord, FullTextIndexDefinition,
-    GraphChanges, NodeRecord, PropertyMap, TraceRecord, VariableRecord,
+    GraphChanges, NodeRecord, PropertyMap, TraceRecord, VariableRecord, VectorIndexDefinition,
+    VectorRecord,
 };
 use std::ffi::{c_char, c_int, c_uchar, c_void, CStr, CString};
 use std::fs;
@@ -48,6 +49,13 @@ extern "C" {
     fn sqlite3_step(stmt: *mut Sqlite3Stmt) -> c_int;
     fn sqlite3_bind_int64(stmt: *mut Sqlite3Stmt, index: c_int, value: i64) -> c_int;
     fn sqlite3_bind_null(stmt: *mut Sqlite3Stmt, index: c_int) -> c_int;
+    fn sqlite3_bind_blob(
+        stmt: *mut Sqlite3Stmt,
+        index: c_int,
+        value: *const c_void,
+        n: c_int,
+        destructor: Option<unsafe extern "C" fn(*mut c_void)>,
+    ) -> c_int;
     fn sqlite3_bind_text(
         stmt: *mut Sqlite3Stmt,
         index: c_int,
@@ -56,6 +64,8 @@ extern "C" {
         destructor: Option<unsafe extern "C" fn(*mut c_void)>,
     ) -> c_int;
     fn sqlite3_column_int64(stmt: *mut Sqlite3Stmt, index: c_int) -> i64;
+    fn sqlite3_column_blob(stmt: *mut Sqlite3Stmt, index: c_int) -> *const c_void;
+    fn sqlite3_column_bytes(stmt: *mut Sqlite3Stmt, index: c_int) -> c_int;
     fn sqlite3_column_text(stmt: *mut Sqlite3Stmt, index: c_int) -> *const c_uchar;
     fn sqlite3_column_type(stmt: *mut Sqlite3Stmt, index: c_int) -> c_int;
 }
@@ -110,6 +120,12 @@ pub(crate) trait GraphStore {
         definition: &FullTextIndexDefinition,
         expression: &str,
     ) -> Result<Vec<u64>, String>;
+    fn load_vector_indexes(&self) -> Result<Vec<VectorIndexDefinition>, String>;
+    fn load_vectors(&self) -> Result<Vec<VectorRecord>, String>;
+    fn create_vector_index(&self, definition: &VectorIndexDefinition) -> Result<(), String>;
+    fn drop_vector_index(&self, name: &str) -> Result<(), String>;
+    fn upsert_vectors(&self, index_name: &str, records: &[VectorRecord]) -> Result<(), String>;
+    fn delete_vectors(&self, index_name: &str, entity_ids: &[u64]) -> Result<(), String>;
     fn path(&self) -> String;
 }
 
@@ -330,6 +346,144 @@ impl SqliteStore {
             }
         }
         Ok(ids)
+    }
+
+    pub(crate) fn load_vector_indexes(&self) -> Result<Vec<VectorIndexDefinition>, String> {
+        let mut stmt = self.prepare(
+            "SELECT name, target, dimensions, metric, model, model_version FROM vector_indexes ORDER BY name;",
+        )?;
+        let mut definitions = Vec::new();
+        loop {
+            match stmt.step()? {
+                SQLITE_ROW => definitions.push(VectorIndexDefinition {
+                    name: stmt.column_text(0)?,
+                    target: stmt.column_text(1)?,
+                    dimensions: usize::try_from(stmt.column_i64(2)?)
+                        .map_err(|_| "vector dimensions exceed usize".to_string())?,
+                    metric: stmt.column_text(3)?,
+                    model: stmt.column_optional_text(4)?,
+                    model_version: stmt.column_optional_text(5)?,
+                }),
+                SQLITE_DONE => break,
+                rc => return Err(format!("unexpected SQLite step result {rc}")),
+            }
+        }
+        Ok(definitions)
+    }
+
+    pub(crate) fn load_vectors(&self) -> Result<Vec<VectorRecord>, String> {
+        let mut stmt = self.prepare(
+            "SELECT index_name, entity_id, embedding FROM vectors ORDER BY index_name, entity_id;",
+        )?;
+        let mut records = Vec::new();
+        loop {
+            match stmt.step()? {
+                SQLITE_ROW => records.push(VectorRecord {
+                    index_name: stmt.column_text(0)?,
+                    entity_id: stmt.column_i64(1)?,
+                    vector: decode_vector_blob(&stmt.column_blob(2)?)?,
+                }),
+                SQLITE_DONE => break,
+                rc => return Err(format!("unexpected SQLite step result {rc}")),
+            }
+        }
+        Ok(records)
+    }
+
+    pub(crate) fn create_vector_index(
+        &self,
+        definition: &VectorIndexDefinition,
+    ) -> Result<(), String> {
+        self.exec("BEGIN IMMEDIATE;")?;
+        let result = (|| {
+            let mut stmt = self.prepare(
+                "INSERT INTO vector_indexes (name, target, dimensions, metric, model, model_version) VALUES (?1, ?2, ?3, ?4, ?5, ?6);",
+            )?;
+            stmt.bind_text(1, &definition.name)?;
+            stmt.bind_text(2, &definition.target)?;
+            stmt.bind_i64(3, definition.dimensions as u64)?;
+            stmt.bind_text(4, &definition.metric)?;
+            stmt.bind_optional_text(5, definition.model.as_deref())?;
+            stmt.bind_optional_text(6, definition.model_version.as_deref())?;
+            stmt.step_done()?;
+            self.append_op("create_vector_index", 0, &definition.name)?;
+            Ok(())
+        })();
+        self.finish_transaction(result)
+    }
+
+    pub(crate) fn drop_vector_index(&self, name: &str) -> Result<(), String> {
+        self.exec("BEGIN IMMEDIATE;")?;
+        let result = (|| {
+            let mut vectors = self.prepare("DELETE FROM vectors WHERE index_name = ?1;")?;
+            vectors.bind_text(1, name)?;
+            vectors.step_done()?;
+            let mut definition = self.prepare("DELETE FROM vector_indexes WHERE name = ?1;")?;
+            definition.bind_text(1, name)?;
+            definition.step_done()?;
+            self.append_op("drop_vector_index", 0, name)?;
+            Ok(())
+        })();
+        self.finish_transaction(result)
+    }
+
+    pub(crate) fn upsert_vectors(
+        &self,
+        index_name: &str,
+        records: &[VectorRecord],
+    ) -> Result<(), String> {
+        if records.is_empty() {
+            return Ok(());
+        }
+        self.exec("BEGIN IMMEDIATE;")?;
+        let result = (|| {
+            let mut stmt = self.prepare(
+                "INSERT INTO vectors (index_name, entity_id, embedding) VALUES (?1, ?2, ?3) ON CONFLICT(index_name, entity_id) DO UPDATE SET embedding = excluded.embedding;",
+            )?;
+            for record in records {
+                stmt.bind_text(1, index_name)?;
+                stmt.bind_i64(2, record.entity_id)?;
+                stmt.bind_blob(3, &encode_vector_blob(&record.vector))?;
+                stmt.step_done()?;
+                stmt.reset()?;
+                self.append_op("upsert_vector", record.entity_id, index_name)?;
+            }
+            Ok(())
+        })();
+        self.finish_transaction(result)
+    }
+
+    pub(crate) fn delete_vectors(
+        &self,
+        index_name: &str,
+        entity_ids: &[u64],
+    ) -> Result<(), String> {
+        if entity_ids.is_empty() {
+            return Ok(());
+        }
+        self.exec("BEGIN IMMEDIATE;")?;
+        let result = (|| {
+            let mut stmt =
+                self.prepare("DELETE FROM vectors WHERE index_name = ?1 AND entity_id = ?2;")?;
+            for entity_id in entity_ids {
+                stmt.bind_text(1, index_name)?;
+                stmt.bind_i64(2, *entity_id)?;
+                stmt.step_done()?;
+                stmt.reset()?;
+                self.append_op("delete_vector", *entity_id, index_name)?;
+            }
+            Ok(())
+        })();
+        self.finish_transaction(result)
+    }
+
+    fn delete_entity_vectors(&self, target: &str, entity_id: u64) -> Result<(), String> {
+        let mut stmt = self.prepare(
+            "DELETE FROM vectors WHERE entity_id = ?1 AND index_name IN (SELECT name FROM vector_indexes WHERE target = ?2);",
+        )?;
+        stmt.bind_i64(1, entity_id)?;
+        stmt.bind_text(2, target)?;
+        stmt.step_done()
     }
 
     fn ensure_healthy_fulltext_table(&self, tokenizer: &str) -> Result<bool, String> {
@@ -813,6 +967,21 @@ impl SqliteStore {
                 properties TEXT NOT NULL,
                 tokenizer TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS vector_indexes (
+                name TEXT PRIMARY KEY,
+                target TEXT NOT NULL,
+                dimensions INTEGER NOT NULL,
+                metric TEXT NOT NULL,
+                model TEXT,
+                model_version TEXT
+            );
+            CREATE TABLE IF NOT EXISTS vectors (
+                index_name TEXT NOT NULL,
+                entity_id INTEGER NOT NULL,
+                embedding BLOB NOT NULL,
+                PRIMARY KEY (index_name, entity_id),
+                FOREIGN KEY (index_name) REFERENCES vector_indexes(name) ON DELETE CASCADE
+            );
             CREATE TABLE IF NOT EXISTS op_log (
                 seq INTEGER PRIMARY KEY AUTOINCREMENT,
                 op TEXT NOT NULL,
@@ -872,6 +1041,7 @@ impl SqliteStore {
             CREATE INDEX IF NOT EXISTS idx_variables_owner ON variables(owner_id);
             CREATE INDEX IF NOT EXISTS idx_variable_states_variable ON variable_states(variable_id, state_index);
             CREATE INDEX IF NOT EXISTS idx_evidence_variable ON evidence(variable_id);
+            CREATE INDEX IF NOT EXISTS idx_vectors_entity ON vectors(entity_id, index_name);
             CREATE INDEX IF NOT EXISTS idx_op_log_op ON op_log(op);
             ",
         )?;
@@ -972,6 +1142,7 @@ impl SqliteStore {
         let mut node = self.prepare("DELETE FROM nodes WHERE id = ?1;")?;
         node.bind_i64(1, node_id)?;
         node.step_done()?;
+        self.delete_entity_vectors("node", node_id)?;
         self.append_op("delete_node", node_id, "")?;
         self.sync_fulltext_entity("node", node_id, None)
     }
@@ -983,6 +1154,7 @@ impl SqliteStore {
         let mut edge = self.prepare("DELETE FROM edges WHERE id = ?1;")?;
         edge.bind_i64(1, edge_id)?;
         edge.step_done()?;
+        self.delete_entity_vectors("edge", edge_id)?;
         self.append_op("delete_edge", edge_id, "")?;
         self.sync_fulltext_entity("edge", edge_id, None)
     }
@@ -1351,6 +1523,30 @@ impl GraphStore for SqliteStore {
         Self::fulltext_candidates(self, definition, expression)
     }
 
+    fn load_vector_indexes(&self) -> Result<Vec<VectorIndexDefinition>, String> {
+        Self::load_vector_indexes(self)
+    }
+
+    fn load_vectors(&self) -> Result<Vec<VectorRecord>, String> {
+        Self::load_vectors(self)
+    }
+
+    fn create_vector_index(&self, definition: &VectorIndexDefinition) -> Result<(), String> {
+        Self::create_vector_index(self, definition)
+    }
+
+    fn drop_vector_index(&self, name: &str) -> Result<(), String> {
+        Self::drop_vector_index(self, name)
+    }
+
+    fn upsert_vectors(&self, index_name: &str, records: &[VectorRecord]) -> Result<(), String> {
+        Self::upsert_vectors(self, index_name, records)
+    }
+
+    fn delete_vectors(&self, index_name: &str, entity_ids: &[u64]) -> Result<(), String> {
+        Self::delete_vectors(self, index_name, entity_ids)
+    }
+
     fn path(&self) -> String {
         self.path.to_string_lossy().into_owned()
     }
@@ -1374,6 +1570,29 @@ impl Statement<'_> {
     fn bind_optional_i64(&mut self, index: c_int, value: Option<u64>) -> Result<(), String> {
         match value {
             Some(value) => self.bind_i64(index, value),
+            None => {
+                let rc = unsafe { sqlite3_bind_null(self.stmt, index) };
+                self.check(rc)
+            }
+        }
+    }
+
+    fn bind_blob(&mut self, index: c_int, value: &[u8]) -> Result<(), String> {
+        let rc = unsafe {
+            sqlite3_bind_blob(
+                self.stmt,
+                index,
+                value.as_ptr().cast(),
+                value.len() as c_int,
+                Some(sqlite_transient()),
+            )
+        };
+        self.check(rc)
+    }
+
+    fn bind_optional_text(&mut self, index: c_int, value: Option<&str>) -> Result<(), String> {
+        match value {
+            Some(value) => self.bind_text(index, value),
             None => {
                 let rc = unsafe { sqlite3_bind_null(self.stmt, index) };
                 self.check(rc)
@@ -1428,6 +1647,28 @@ impl Statement<'_> {
         self.column_i64(index).map(Some)
     }
 
+    fn column_blob(&self, index: c_int) -> Result<Vec<u8>, String> {
+        let length = unsafe { sqlite3_column_bytes(self.stmt, index) };
+        if length < 0 {
+            return Err("negative SQLite blob length".to_string());
+        }
+        if length == 0 {
+            return Ok(Vec::new());
+        }
+        let ptr = unsafe { sqlite3_column_blob(self.stmt, index) };
+        if ptr.is_null() {
+            return Err("SQLite blob pointer is null".to_string());
+        }
+        Ok(unsafe { std::slice::from_raw_parts(ptr.cast::<u8>(), length as usize) }.to_vec())
+    }
+
+    fn column_optional_text(&self, index: c_int) -> Result<Option<String>, String> {
+        if unsafe { sqlite3_column_type(self.stmt, index) } == SQLITE_NULL {
+            return Ok(None);
+        }
+        self.column_text(index).map(Some)
+    }
+
     fn column_text(&self, index: c_int) -> Result<String, String> {
         let ptr = unsafe { sqlite3_column_text(self.stmt, index) };
         if ptr.is_null() {
@@ -1455,6 +1696,32 @@ impl Drop for Statement<'_> {
             }
         }
     }
+}
+
+fn encode_vector_blob(vector: &[f32]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(vector.len() * 4);
+    for value in vector {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+    bytes
+}
+
+fn decode_vector_blob(bytes: &[u8]) -> Result<Vec<f32>, String> {
+    if !bytes.len().is_multiple_of(4) {
+        return Err(format!(
+            "vector BLOB length {} is not divisible by 4",
+            bytes.len()
+        ));
+    }
+    let mut vector = Vec::with_capacity(bytes.len() / 4);
+    for chunk in bytes.chunks_exact(4) {
+        let value = f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+        if !value.is_finite() {
+            return Err("persisted vector values must be finite float32".to_string());
+        }
+        vector.push(value);
+    }
+    Ok(vector)
 }
 
 fn fulltext_table(tokenizer: &str) -> Result<&'static str, String> {

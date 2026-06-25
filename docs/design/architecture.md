@@ -10,6 +10,7 @@ flowchart LR
     Core --> Adj["CSR/CSC segment<br/>+ mutable delta overlay"]
     Core --> Store["SQLite store<br/>src/sqlite.rs"]
     Core --> Inference["Variables, factors,<br/>evidence, traces"]
+    Core --> Retrieval["Full-text + exact<br/>vector retrieval"]
     Store --> Sidecar[".segments/ sidecar files"]
 ```
 
@@ -54,6 +55,7 @@ does not mutate the original graph.
 ## Design Boundaries
 
 - Properties are stored as scalar values: `bool`, `int`, `float`, or `str`.
+  Embeddings use a separate named vector-index model rather than properties.
 - Direction filters are parsed at the core boundary and support outgoing,
   incoming, or both-direction traversal.
 - Probabilistic variables are not inferred from properties; they are created

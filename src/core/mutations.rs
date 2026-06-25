@@ -163,8 +163,10 @@ impl GraphCore {
         }
         for edge_id in incident {
             self.edges[edge_id as usize] = None;
+            self.remove_entity_vectors("edge", edge_id);
         }
         self.nodes[node_id as usize] = None;
+        self.remove_entity_vectors("node", node_id);
         self.rebuild_derived_state();
         self.mutation_version = self.mutation_version.wrapping_add(1);
         Ok(())
@@ -177,6 +179,7 @@ impl GraphCore {
             .and_then(Option::take)
             .ok_or_else(|| format!("edge {edge_id} not found"))?;
         let _ = edge;
+        self.remove_entity_vectors("edge", edge_id);
         self.rebuild_derived_state();
         self.mutation_version = self.mutation_version.wrapping_add(1);
         Ok(())
@@ -270,6 +273,7 @@ impl GraphCore {
         self.node_property_value_index = staged.node_property_value_index.clone();
         self.edge_property_key_index = staged.edge_property_key_index.clone();
         self.edge_property_value_index = staged.edge_property_value_index.clone();
+        self.vectors = staged.vectors.clone();
         self.next_node_id = staged.next_node_id;
         self.next_edge_id = staged.next_edge_id;
         self.mutation_version = next_version;

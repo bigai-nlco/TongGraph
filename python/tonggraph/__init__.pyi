@@ -218,6 +218,28 @@ class GraphSnapshot:
         """Search a named full-text index."""
         ...
 
+    def vector_indexes(self) -> list[dict[str, Any]]:
+        """Return named vector index definitions ordered by name."""
+        ...
+
+    def get_vector(self, index_name: str, entity_id: int) -> list[float]:
+        """Return an entity vector, raising KeyError when it is absent."""
+        ...
+
+    def search_vector(
+        self,
+        index_name: str,
+        query_vector: Sequence[float],
+        labels: Sequence[str] | None = None,
+        edge_type: str | None = None,
+        properties: Properties | None = None,
+        min_score: float | None = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """Search a named vector index by exact similarity."""
+        ...
+
     def node_count(self) -> int:
         """Return the number of live nodes."""
         ...
@@ -544,6 +566,42 @@ class Graph(GraphSnapshot):
         offset: int = 0,
     ) -> list[dict[str, Any]]:
         """Search a named full-text index."""
+        ...
+
+    def create_vector_index(
+        self,
+        name: str,
+        dimensions: int,
+        target: str = "node",
+        metric: str = "cosine",
+        model: str | None = None,
+        model_version: str | None = None,
+    ) -> None:
+        """Create a named node or edge vector index."""
+        ...
+
+    def drop_vector_index(self, name: str) -> None:
+        """Drop a vector index and all vectors stored in it."""
+        ...
+
+    def upsert_vector(
+        self, index_name: str, entity_id: int, vector: Sequence[float]
+    ) -> None:
+        """Insert or replace one entity vector."""
+        ...
+
+    def upsert_vectors(
+        self, index_name: str, vectors: Mapping[int, Sequence[float]]
+    ) -> None:
+        """Atomically insert or replace multiple entity vectors."""
+        ...
+
+    def delete_vector(self, index_name: str, entity_id: int) -> None:
+        """Idempotently delete one entity vector."""
+        ...
+
+    def delete_vectors(self, index_name: str, entity_ids: Sequence[int]) -> None:
+        """Idempotently delete multiple entity vectors atomically."""
         ...
 
     def compact(self) -> None:

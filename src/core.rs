@@ -11,6 +11,7 @@ mod properties;
 mod queries;
 pub(crate) mod segment;
 mod traversal;
+mod vector;
 
 #[cfg(test)]
 mod tests;
@@ -22,10 +23,11 @@ pub(crate) use queries::{
     EdgePattern, NodePattern, PropertyConstraint, PropertyOperator, QueryDirection, QueryElement,
     QueryRow, QuerySpec, QueryValue,
 };
+pub(crate) use vector::VectorSearchOptions;
 
 use crate::models::{
     EdgeRecord, EvidenceRecord, FactorRecord, FactorTableRecord, FullTextIndexDefinition,
-    NodeRecord, TraceRecord, VariableRecord,
+    NodeRecord, TraceRecord, VariableRecord, VectorIndexDefinition,
 };
 use crate::sqlite::GraphStore;
 use properties::PropertyIndexKey;
@@ -52,6 +54,8 @@ pub(crate) struct GraphCore {
     edge_property_key_index: HashMap<String, BTreeSet<u64>>,
     edge_property_value_index: HashMap<PropertyIndexKey, BTreeSet<u64>>,
     fulltext_indexes: HashMap<String, FullTextIndexDefinition>,
+    vector_indexes: HashMap<String, VectorIndexDefinition>,
+    vectors: HashMap<String, HashMap<u64, Vec<f32>>>,
     next_node_id: u64,
     next_edge_id: u64,
     next_variable_id: u64,

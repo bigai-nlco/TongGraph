@@ -11,7 +11,11 @@ use super::query::{query_rows_to_py, query_schema_to_py, query_spec_from_py};
 use super::records::{PyEdge, PyEvidence, PyFactor, PyNode, PyTrace, PyVariable};
 use super::snapshot::PyGraphSnapshot;
 use super::to_py_value_error;
-use crate::core::{FullTextSearchOptions, GraphCore};
+use super::vector::{
+    definitions_to_py as vector_definitions_to_py, search_results_to_py as vector_results_to_py,
+    vectors_from_py,
+};
+use crate::core::{FullTextSearchOptions, GraphCore, VectorSearchOptions};
 use crate::cypher;
 use crate::models::{NewEdgeRecord, NewNodeRecord};
 use pyo3::exceptions::{PyKeyError, PyRuntimeError, PyValueError};
@@ -192,6 +196,115 @@ impl PyGraph {
             .search_text(&index_name, &query, mode, &options)
             .map_err(to_py_value_error)?;
         search_results_to_py(py, results)
+    }
+
+    #[pyo3(signature = (name, dimensions, target="node", metric="cosine", model=None, model_version=None))]
+    fn create_vector_index(
+        &mut self,
+        name: String,
+        dimensions: usize,
+        target: &str,
+        metric: &str,
+        model: Option<String>,
+        model_version: Option<String>,
+    ) -> PyResult<()> {
+        self.core
+            .borrow_mut()
+            .create_vector_index(
+                name,
+                target.to_string(),
+                dimensions,
+                metric.to_string(),
+                model,
+                model_version,
+            )
+            .map_err(to_py_value_error)
+    }
+
+    fn drop_vector_index(&mut self, name: String) -> PyResult<()> {
+        self.core
+            .borrow_mut()
+            .drop_vector_index(&name)
+            .map_err(to_py_value_error)
+    }
+
+    fn vector_indexes(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        vector_definitions_to_py(py, self.core.borrow().vector_indexes())
+    }
+
+    fn upsert_vector(
+        &mut self,
+        index_name: String,
+        entity_id: u64,
+        vector: Vec<f64>,
+    ) -> PyResult<()> {
+        self.core
+            .borrow_mut()
+            .upsert_vector(&index_name, entity_id, vector)
+            .map_err(to_py_value_error)
+    }
+
+    fn upsert_vectors(&mut self, index_name: String, vectors: &Bound<'_, PyDict>) -> PyResult<()> {
+        let vectors = vectors_from_py(vectors)?;
+        self.core
+            .borrow_mut()
+            .upsert_vectors(&index_name, vectors)
+            .map_err(to_py_value_error)
+    }
+
+    fn get_vector(&self, index_name: String, entity_id: u64) -> PyResult<Vec<f32>> {
+        self.core
+            .borrow()
+            .get_vector(&index_name, entity_id)
+            .map_err(to_py_value_error)?
+            .ok_or_else(|| {
+                PyKeyError::new_err(format!(
+                    "vector for index {index_name:?} entity {entity_id} not found"
+                ))
+            })
+    }
+
+    fn delete_vector(&mut self, index_name: String, entity_id: u64) -> PyResult<()> {
+        self.core
+            .borrow_mut()
+            .delete_vector(&index_name, entity_id)
+            .map_err(to_py_value_error)
+    }
+
+    fn delete_vectors(&mut self, index_name: String, entity_ids: Vec<u64>) -> PyResult<()> {
+        self.core
+            .borrow_mut()
+            .delete_vectors(&index_name, entity_ids)
+            .map_err(to_py_value_error)
+    }
+
+    #[pyo3(signature = (index_name, query_vector, labels=None, edge_type=None, properties=None, min_score=None, limit=20, offset=0))]
+    fn search_vector(
+        &self,
+        py: Python<'_>,
+        index_name: String,
+        query_vector: Vec<f64>,
+        labels: Option<Vec<String>>,
+        edge_type: Option<String>,
+        properties: Option<&Bound<'_, PyDict>>,
+        min_score: Option<f64>,
+        limit: usize,
+        offset: usize,
+    ) -> PyResult<Py<PyAny>> {
+        let options = VectorSearchOptions {
+            labels: labels.unwrap_or_default(),
+            edge_type,
+            properties: properties_from_py(properties)?,
+            min_score,
+            limit,
+            offset,
+        };
+        let results = self
+            .core
+            .borrow()
+            .search_vector(&index_name, &query_vector, &options)
+            .map_err(to_py_value_error)?;
+        vector_results_to_py(py, results)
     }
 
     fn node_count(&self) -> usize {

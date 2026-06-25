@@ -7,7 +7,10 @@ use super::properties::{optional_property_value_from_py, properties_from_py};
 use super::query::{query_rows_to_py, query_schema_to_py, query_spec_from_py};
 use super::records::{PyEdge, PyEvidence, PyFactor, PyNode, PyTrace, PyVariable};
 use super::to_py_value_error;
-use crate::core::{FullTextSearchOptions, GraphCore};
+use super::vector::{
+    definitions_to_py as vector_definitions_to_py, search_results_to_py as vector_results_to_py,
+};
+use crate::core::{FullTextSearchOptions, GraphCore, VectorSearchOptions};
 use crate::cypher;
 use pyo3::exceptions::PyKeyError;
 use pyo3::prelude::*;
@@ -54,6 +57,50 @@ impl PyGraphSnapshot {
             py,
             self.core
                 .search_text(&index_name, &query, mode, &options)
+                .map_err(to_py_value_error)?,
+        )
+    }
+
+    fn vector_indexes(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        vector_definitions_to_py(py, self.core.vector_indexes())
+    }
+
+    fn get_vector(&self, index_name: String, entity_id: u64) -> PyResult<Vec<f32>> {
+        self.core
+            .get_vector(&index_name, entity_id)
+            .map_err(to_py_value_error)?
+            .ok_or_else(|| {
+                PyKeyError::new_err(format!(
+                    "vector for index {index_name:?} entity {entity_id} not found"
+                ))
+            })
+    }
+
+    #[pyo3(signature = (index_name, query_vector, labels=None, edge_type=None, properties=None, min_score=None, limit=20, offset=0))]
+    fn search_vector(
+        &self,
+        py: Python<'_>,
+        index_name: String,
+        query_vector: Vec<f64>,
+        labels: Option<Vec<String>>,
+        edge_type: Option<String>,
+        properties: Option<&Bound<'_, PyDict>>,
+        min_score: Option<f64>,
+        limit: usize,
+        offset: usize,
+    ) -> PyResult<Py<PyAny>> {
+        let options = VectorSearchOptions {
+            labels: labels.unwrap_or_default(),
+            edge_type,
+            properties: properties_from_py(properties)?,
+            min_score,
+            limit,
+            offset,
+        };
+        vector_results_to_py(
+            py,
+            self.core
+                .search_vector(&index_name, &query_vector, &options)
                 .map_err(to_py_value_error)?,
         )
     }

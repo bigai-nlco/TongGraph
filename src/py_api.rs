@@ -7,6 +7,7 @@ mod properties;
 mod query;
 mod records;
 mod snapshot;
+mod vector;
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;

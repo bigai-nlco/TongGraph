@@ -18,6 +18,8 @@ TongGraph is a lightweight embedded graph compute database for Python applicatio
   hook.
 - Named full-text indexes for node and edge properties with Unicode word search,
   trigram substring search, filters, and snapshot reads.
+- Named vector indexes for caller-provided node and edge embeddings with cosine,
+  dot-product, and Euclidean exact search.
 - Embedded Cypher compatibility subset for local `MATCH`, `CREATE`, `MERGE`,
   `SET`, `REMOVE`, `DELETE`, `DETACH DELETE`, `RETURN`, parameters, and staged
   transactions.

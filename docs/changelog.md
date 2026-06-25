@@ -6,6 +6,8 @@
 
 - Adds named full-text indexes for node and edge properties, including Unicode
   word search, trigram substring search, filters, persistence, and snapshot reads.
+- Adds named vector indexes for caller-provided node and edge embeddings with
+  deterministic cosine, dot-product, and Euclidean exact search.
 
 ### Changed
 

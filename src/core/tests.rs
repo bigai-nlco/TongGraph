@@ -1401,6 +1401,347 @@ fn fulltext_validation_rejects_invalid_definitions_and_filters() {
         .is_err());
 }
 
+#[test]
+fn in_memory_vector_search_supports_metrics_filters_snapshots_and_subgraphs() {
+    let mut graph = GraphCore::new();
+    let a = graph
+        .add_node(
+            Some("a".to_string()),
+            vec!["Document".to_string()],
+            typed_map([("published", PropertyValue::Bool(true))]),
+        )
+        .unwrap();
+    let b = graph
+        .add_node(
+            Some("b".to_string()),
+            vec!["Document".to_string()],
+            typed_map([("published", PropertyValue::Bool(false))]),
+        )
+        .unwrap();
+    let c = graph
+        .add_node(Some("c".to_string()), Vec::new(), map([]))
+        .unwrap();
+    let edge = graph.add_edge(a, c, "CITES".to_string(), map([])).unwrap();
+
+    graph
+        .create_vector_index(
+            "documents".to_string(),
+            "node".to_string(),
+            3,
+            "cosine".to_string(),
+            Some("embed".to_string()),
+            Some("1".to_string()),
+        )
+        .unwrap();
+    graph
+        .upsert_vectors(
+            "documents",
+            vec![(a, vec![1.0, 0.0, 0.0]), (b, vec![0.5, 0.5, 0.0])],
+        )
+        .unwrap();
+    graph
+        .create_vector_index(
+            "relations".to_string(),
+            "edge".to_string(),
+            2,
+            "euclidean".to_string(),
+            None,
+            None,
+        )
+        .unwrap();
+    graph
+        .upsert_vector("relations", edge, vec![1.0, 1.0])
+        .unwrap();
+
+    let results = graph
+        .search_vector(
+            "documents",
+            &[1.0, 0.0, 0.0],
+            &VectorSearchOptions {
+                labels: vec!["Document".to_string()],
+                edge_type: None,
+                properties: PropertyMap::new(),
+                min_score: None,
+                limit: 20,
+                offset: 0,
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        results.iter().map(|result| result.id).collect::<Vec<_>>(),
+        vec![a, b]
+    );
+    assert_close(results[0].score, 1.0);
+    assert!(results[1].score < results[0].score);
+
+    let filtered = graph
+        .search_vector(
+            "documents",
+            &[1.0, 0.0, 0.0],
+            &VectorSearchOptions {
+                labels: vec!["Document".to_string()],
+                edge_type: None,
+                properties: typed_map([("published", PropertyValue::Bool(true))]),
+                min_score: Some(0.9),
+                limit: 1,
+                offset: 0,
+            },
+        )
+        .unwrap();
+    assert_eq!(filtered[0].id, a);
+    let edge_result = graph
+        .search_vector(
+            "relations",
+            &[1.0, 1.0],
+            &VectorSearchOptions {
+                labels: Vec::new(),
+                edge_type: Some("CITES".to_string()),
+                properties: PropertyMap::new(),
+                min_score: None,
+                limit: 20,
+                offset: 0,
+            },
+        )
+        .unwrap();
+    assert_eq!(edge_result[0].id, edge);
+    assert_close(edge_result[0].score, 1.0);
+
+    let snapshot = graph.snapshot();
+    let subgraph = graph.subgraph(&[a, c], None).unwrap();
+    graph
+        .upsert_vector("documents", a, vec![0.0, 1.0, 0.0])
+        .unwrap();
+    assert_close(
+        snapshot
+            .search_vector("documents", &[1.0, 0.0, 0.0], &vector_options())
+            .unwrap()[0]
+            .score,
+        1.0,
+    );
+    assert_eq!(
+        subgraph.get_vector("documents", a).unwrap().unwrap(),
+        vec![1.0, 0.0, 0.0]
+    );
+    assert!(subgraph.get_vector("documents", b).is_err());
+}
+
+#[test]
+fn vector_search_validates_batches_and_supports_dot_ties() {
+    let mut graph = GraphCore::new();
+    let a = graph
+        .add_node(Some("a".to_string()), Vec::new(), map([]))
+        .unwrap();
+    let b = graph
+        .add_node(Some("b".to_string()), Vec::new(), map([]))
+        .unwrap();
+    graph
+        .create_vector_index(
+            "dot".to_string(),
+            "node".to_string(),
+            2,
+            "dot".to_string(),
+            None,
+            None,
+        )
+        .unwrap();
+    let error = graph
+        .upsert_vectors("dot", vec![(a, vec![1.0, 0.0]), (b, vec![f64::NAN, 0.0])])
+        .unwrap_err();
+    assert!(error.contains("finite"));
+    assert!(graph.get_vector("dot", a).unwrap().is_none());
+    graph
+        .upsert_vectors("dot", vec![(b, vec![1.0, 0.0]), (a, vec![1.0, 0.0])])
+        .unwrap();
+    let results = graph
+        .search_vector("dot", &[2.0, 0.0], &vector_options())
+        .unwrap();
+    assert_eq!(
+        results.iter().map(|result| result.id).collect::<Vec<_>>(),
+        vec![a, b]
+    );
+    assert_close(results[0].score, 2.0);
+    let paged = graph
+        .search_vector(
+            "dot",
+            &[2.0, 0.0],
+            &VectorSearchOptions {
+                offset: 1,
+                limit: 1,
+                ..vector_options()
+            },
+        )
+        .unwrap();
+    assert_eq!(paged[0].id, b);
+    assert!(graph.upsert_vector("dot", a, vec![1.0]).is_err());
+
+    graph
+        .create_vector_index(
+            "cosine".to_string(),
+            "node".to_string(),
+            2,
+            "cosine".to_string(),
+            None,
+            None,
+        )
+        .unwrap();
+    assert!(graph
+        .upsert_vector("cosine", a, vec![0.0, 0.0])
+        .unwrap_err()
+        .contains("zero"));
+    assert!(graph
+        .create_vector_index(
+            "bad-model".to_string(),
+            "node".to_string(),
+            2,
+            "cosine".to_string(),
+            None,
+            Some("1".to_string()),
+        )
+        .is_err());
+    assert!(graph
+        .create_vector_index(
+            "bad-target".to_string(),
+            "mixed".to_string(),
+            2,
+            "cosine".to_string(),
+            None,
+            None,
+        )
+        .is_err());
+    assert!(graph
+        .create_vector_index(
+            "bad-dimensions".to_string(),
+            "node".to_string(),
+            0,
+            "cosine".to_string(),
+            None,
+            None,
+        )
+        .is_err());
+    assert!(graph
+        .create_vector_index(
+            "bad-metric".to_string(),
+            "node".to_string(),
+            2,
+            "manhattan".to_string(),
+            None,
+            None,
+        )
+        .is_err());
+    assert!(graph
+        .search_vector(
+            "dot",
+            &[1.0, 0.0],
+            &VectorSearchOptions {
+                limit: 0,
+                ..vector_options()
+            },
+        )
+        .is_err());
+    assert!(graph
+        .search_vector(
+            "dot",
+            &[1.0, 0.0],
+            &VectorSearchOptions {
+                min_score: Some(f64::NAN),
+                ..vector_options()
+            },
+        )
+        .is_err());
+    assert!(graph
+        .search_vector(
+            "dot",
+            &[1.0, 0.0],
+            &VectorSearchOptions {
+                edge_type: Some("LINK".to_string()),
+                ..vector_options()
+            },
+        )
+        .is_err());
+}
+
+#[test]
+fn sqlite_vectors_persist_and_entity_deletes_cascade_transactionally() {
+    let path = temp_db_path("tonggraph-vectors");
+    let node;
+    let target;
+    let edge;
+    {
+        let mut graph = GraphCore::open(path.to_str().unwrap()).unwrap();
+        node = graph
+            .add_node(Some("node".to_string()), Vec::new(), map([]))
+            .unwrap();
+        target = graph
+            .add_node(Some("target".to_string()), Vec::new(), map([]))
+            .unwrap();
+        edge = graph
+            .add_edge(node, target, "LINK".to_string(), map([]))
+            .unwrap();
+        graph
+            .create_vector_index(
+                "nodes".to_string(),
+                "node".to_string(),
+                2,
+                "cosine".to_string(),
+                None,
+                None,
+            )
+            .unwrap();
+        graph
+            .create_vector_index(
+                "edges".to_string(),
+                "edge".to_string(),
+                2,
+                "euclidean".to_string(),
+                None,
+                None,
+            )
+            .unwrap();
+        graph.upsert_vector("nodes", node, vec![1.0, 0.0]).unwrap();
+        graph.upsert_vector("edges", edge, vec![0.0, 1.0]).unwrap();
+    }
+    {
+        let mut graph = GraphCore::open(path.to_str().unwrap()).unwrap();
+        assert_eq!(
+            graph.get_vector("nodes", node).unwrap().unwrap(),
+            vec![1.0, 0.0]
+        );
+        assert_eq!(
+            graph.get_vector("edges", edge).unwrap().unwrap(),
+            vec![0.0, 1.0]
+        );
+        let (mut staged, version) = graph.transaction_snapshot();
+        staged.delete_node_in_place(target, true).unwrap();
+        graph.commit_transaction_snapshot(&staged, version).unwrap();
+        assert!(graph
+            .search_vector("edges", &[0.0, 1.0], &vector_options())
+            .unwrap()
+            .is_empty());
+    }
+    let mut graph = GraphCore::open(path.to_str().unwrap()).unwrap();
+    assert!(graph
+        .search_vector("edges", &[0.0, 1.0], &vector_options())
+        .unwrap()
+        .is_empty());
+    graph.delete_vector("nodes", node).unwrap();
+    graph.delete_vector("nodes", node).unwrap();
+    assert!(graph.get_vector("nodes", node).unwrap().is_none());
+    graph.drop_vector_index("edges").unwrap();
+    assert!(graph.get_vector("edges", edge).is_err());
+    cleanup_db(&path);
+}
+
+fn vector_options() -> VectorSearchOptions {
+    VectorSearchOptions {
+        labels: Vec::new(),
+        edge_type: None,
+        properties: PropertyMap::new(),
+        min_score: None,
+        limit: 20,
+        offset: 0,
+    }
+}
+
 fn fulltext_options() -> FullTextSearchOptions {
     FullTextSearchOptions {
         labels: Vec::new(),

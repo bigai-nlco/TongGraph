@@ -292,6 +292,157 @@ def test_sqlite_fulltext_rebuilds_corrupt_shadow_table(tmp_path: Path) -> None:
     assert "fulltext_unicode_data" in shadow_tables
 
 
+def test_vector_search_in_memory_lifecycle_filters_and_snapshot() -> None:
+    graph = Graph()
+    guide = graph.add_node(
+        "guide",
+        labels=["Document"],
+        properties={"published": True},
+    )
+    notes = graph.add_node(
+        "notes",
+        labels=["Document"],
+        properties={"published": False},
+    )
+    target = graph.add_node("target")
+    edge = graph.add_edge(guide, target, "CITES")
+
+    graph.create_vector_index(
+        "documents",
+        target="node",
+        dimensions=3,
+        metric="cosine",
+        model="example-embedding",
+        model_version="1",
+    )
+    graph.create_vector_index("relations", 2, target="edge", metric="euclidean")
+    assert graph.vector_indexes() == [
+        {
+            "name": "documents",
+            "target": "node",
+            "dimensions": 3,
+            "metric": "cosine",
+            "model": "example-embedding",
+            "model_version": "1",
+        },
+        {
+            "name": "relations",
+            "target": "edge",
+            "dimensions": 2,
+            "metric": "euclidean",
+            "model": None,
+            "model_version": None,
+        },
+    ]
+
+    graph.upsert_vectors(
+        "documents",
+        {guide: [1.0, 0.0, 0.0], notes: [0.5, 0.5, 0.0]},
+    )
+    graph.upsert_vector("relations", edge, [1.0, 1.0])
+    results = graph.search_vector(
+        "documents",
+        [1.0, 0.0, 0.0],
+        labels=["Document"],
+    )
+    assert [result["id"] for result in results] == [guide, notes]
+    assert results[0] == {"kind": "node", "id": guide, "score": 1.0}
+    assert graph.search_vector(
+        "documents",
+        [1.0, 0.0, 0.0],
+        properties={"published": True},
+        min_score=0.9,
+        limit=1,
+    )[0]["id"] == guide
+    assert graph.search_vector(
+        "relations", [1.0, 1.0], edge_type="CITES"
+    )[0] == {"kind": "edge", "id": edge, "score": 1.0}
+
+    snapshot = graph.snapshot()
+    subgraph = graph.subgraph([guide, target])
+    graph.upsert_vector("documents", guide, [0.0, 1.0, 0.0])
+    assert snapshot.get_vector("documents", guide) == [1.0, 0.0, 0.0]
+    assert subgraph.get_vector("documents", guide) == [1.0, 0.0, 0.0]
+    with pytest.raises(ValueError, match="not found"):
+        subgraph.get_vector("documents", notes)
+
+    with pytest.raises(ValueError, match="finite"):
+        graph.upsert_vectors(
+            "documents", {guide: [1.0, 0.0, 0.0], notes: [float("nan"), 0.0, 0.0]}
+        )
+    assert graph.get_vector("documents", notes) == pytest.approx([0.5, 0.5, 0.0])
+    graph.delete_vector("documents", notes)
+    graph.delete_vector("documents", notes)
+    with pytest.raises(KeyError, match="not found"):
+        graph.get_vector("documents", notes)
+    with pytest.raises(ValueError, match="edge_type"):
+        graph.search_vector("documents", [1.0, 0.0, 0.0], edge_type="CITES")
+    with pytest.raises(ValueError, match="dimensions"):
+        graph.search_vector("documents", [1.0, 0.0])
+    graph.drop_vector_index("relations")
+
+
+def test_sqlite_vectors_reopen_log_stale_handle_cascade_and_corruption(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "vectors.db"
+    graph = Graph(str(db_path))
+    node = graph.add_node("node", labels=["Document"])
+    target = graph.add_node("target")
+    edge = graph.add_edge(node, target, "LINK")
+    graph.create_vector_index("nodes", 2, target="node", metric="dot")
+    graph.create_vector_index("edges", 2, target="edge", metric="euclidean")
+    graph.upsert_vectors("nodes", {node: [1.0, 2.0], target: [1.0, 1.0]})
+    graph.upsert_vector("edges", edge, [0.0, 1.0])
+    stale = Graph(str(db_path))
+    graph.upsert_vector("nodes", node, [2.0, 3.0])
+    with pytest.raises(ValueError, match="refresh"):
+        stale.delete_vector("nodes", node)
+    stale.refresh()
+    assert stale.get_vector("nodes", node) == pytest.approx([2.0, 3.0])
+
+    with graph.transaction() as tx:
+        tx.run("MATCH (n {external_id: 'target'}) DETACH DELETE n")
+    assert graph.search_vector("edges", [0.0, 1.0]) == []
+    del stale
+    del graph
+
+    reopened = Graph(str(db_path))
+    assert reopened.get_vector("nodes", node) == pytest.approx([2.0, 3.0])
+    assert reopened.search_vector("nodes", [1.0, 1.0])[0]["id"] == node
+    with connect(db_path) as connection:
+        definitions = connection.execute(
+            "SELECT name, target, dimensions, metric, model, model_version "
+            "FROM vector_indexes ORDER BY name"
+        ).fetchall()
+        assert definitions == [
+            ("edges", "edge", 2, "euclidean", None, None),
+            ("nodes", "node", 2, "dot", None, None),
+        ]
+        operations = [
+            row[0]
+            for row in connection.execute(
+                "SELECT op FROM op_log WHERE op LIKE '%vector%' ORDER BY seq"
+            )
+        ]
+        assert operations.count("create_vector_index") == 2
+        assert operations.count("upsert_vector") == 4
+        assert connection.execute(
+            "SELECT COUNT(*) FROM vectors WHERE index_name = 'edges'"
+        ).fetchone() == (0,)
+        assert connection.execute(
+            "SELECT entity_id FROM vectors WHERE index_name = 'nodes' ORDER BY entity_id"
+        ).fetchall() == [(node,)]
+        connection.execute(
+            "UPDATE vectors SET embedding = x'0000' "
+            "WHERE index_name = 'nodes' AND entity_id = ?",
+            (node,),
+        )
+    del reopened
+    with pytest.raises(RuntimeError, match="BLOB length"):
+        Graph(str(db_path))
+
+
 def test_query_layer_structured_queries_snapshots_reopen_and_nl(tmp_path: Path) -> None:
     db_path = tmp_path / "query.db"
     graph = Graph(str(db_path))

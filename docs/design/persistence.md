@@ -13,6 +13,7 @@ SQLite tables are initialized in `src/sqlite.rs` and cover:
 - property key/value catalogs
 - operation log entries
 - full-text index definitions and SQLite FTS5 derived rows
+- vector index definitions and little-endian float32 vector BLOBs
 - variables and ordered variable states
 - factor metadata and factor tables
 - latest posteriors
@@ -81,6 +82,9 @@ thresholds in `src/core/lifecycle.rs`.
   are not reused after reopening a graph.
 - Full-text definitions are durable. FTS5 rows are synchronized inside graph
   mutation transactions and rebuilt from graph records whenever a graph opens.
+- Vector definitions and embeddings are durable. Vector batches are atomic,
+  entity deletion removes associated vectors in the same transaction, and graph
+  open validates persisted BLOBs before publishing state.
 - Properties are limited to Python-compatible scalar values: `bool`, `int`,
   finite `float`, and `str`.
 - Local `.db`, `.db-shm`, `.db-wal`, and `.segments/` artifacts are ignored by

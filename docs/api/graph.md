@@ -17,6 +17,7 @@ graph; `Graph(path)` or `Graph.open(path)` opens a SQLite-backed graph.
 | `compute_batch` | [Batch compute](../design/algorithms.md#batch-compute) |
 | `query`, `query_schema` | [Structured path-pattern query DSL](../design/query-layer.md) |
 | `create_fulltext_index`, `drop_fulltext_index`, `fulltext_indexes`, `rebuild_fulltext_index`, `search_text` | [Full-text search](../design/fulltext-search.md) |
+| `create_vector_index`, `drop_vector_index`, `vector_indexes`, `upsert_vector`, `upsert_vectors`, `get_vector`, `delete_vector`, `delete_vectors`, `search_vector` | [Vector search](../design/vector-search.md) |
 | `update_node`, `update_edge`, `delete_node`, `delete_edge` | [Persistence and graph mutations](../design/persistence.md) |
 | `cypher`, `transaction` | [Cypher compatibility](../design/cypher-compatibility.md) |
 | `add_variable`, `add_factor_table`, `add_cpd`, `add_evidence`, `compile_active_subgraph`, `belief_propagation`, `posterior` | [Belief propagation](../design/belief-propagation.md) |

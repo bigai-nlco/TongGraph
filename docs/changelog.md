@@ -86,11 +86,3 @@ graph compute, and explicit finite-discrete belief propagation.
   inference workflows.
 - Builds Python source distributions and platform wheels through the
   `maturin`/`uv build` packaging path.
-
-### Known Scope
-
-- TongGraph 0.1.0 is local-first and append-oriented.
-- SQLite tables and sidecar segment formats are pre-v1 and may change.
-- The Cypher layer is a compatibility subset, not a full Cypher implementation.
-- Server deployment, access control, full-text search, vector search, update and
-  delete APIs, and multi-platform release wheels are outside the 0.1.0 scope.

@@ -65,9 +65,12 @@ nav:
       - Query Layer: design/query-layer.md
       - Full-Text Search: design/fulltext-search.md
       - Vector Search: design/vector-search.md
+      - Local Server: design/local-server.md
       - Cypher Compatibility: design/cypher-compatibility.md
       - Belief Propagation: design/belief-propagation.md
       - Persistence: design/persistence.md
+  - Development:
+      - Local Server Development 中文: development/local-server-development.zh.md
   - Examples:
       - Examples: examples/index.md
       - Property Graph Basics: examples/property-graph-basics.md
@@ -80,6 +83,7 @@ nav:
       - SQLite Reopen: examples/sqlite-reopen.md
       - Belief Propagation: examples/belief-propagation.md
       - Benchmarks: examples/benchmarks.md
+      - Local Server: examples/local-server.md
 
 plugins:
   - search

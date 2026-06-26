@@ -15,6 +15,12 @@
   local graph expansion and ranking.
 - Adds CSV/JSONL import helpers, JSONL export helpers, and a JSON benchmark
   runner under `tests/benchmark`.
+- Adds the optional `tonggraph[server]` local HTTP server with token auth,
+  graph-level ACLs, admin graph creation, persisted server state, and core
+  storage/retrieval/query endpoints.
+- Extends TongGraph Server with traversal, runtime algorithm, `subgraph()`,
+  `compute_batch()`, batch vector search, and TTL-bound read-only snapshot HTTP
+  endpoints.
 
 ### Changed
 

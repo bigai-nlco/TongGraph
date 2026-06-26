@@ -6,6 +6,7 @@ use super::fulltext::{definitions_to_py, search_results_to_py};
 use super::inference::{
     active_subgraph_to_py, belief_result_to_py, distribution_to_py, evidence_from_py,
 };
+use super::introspection::{graph_schema_to_py, graph_stats_to_py, query_profile_to_py};
 use super::properties::{optional_property_value_from_py, properties_from_py};
 use super::query::{query_rows_to_py, query_schema_to_py, query_spec_from_py};
 use super::records::{PyEdge, PyEvidence, PyFactor, PyNode, PyTrace, PyVariable};
@@ -331,6 +332,14 @@ impl PyGraph {
         self.core.borrow().trace_count()
     }
 
+    fn schema(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        graph_schema_to_py(py, self.core.borrow().schema_summary())
+    }
+
+    fn stats(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        graph_stats_to_py(py, self.core.borrow().stats_summary())
+    }
+
     fn node_ids(&self) -> Vec<u64> {
         self.core.borrow().node_ids()
     }
@@ -607,26 +616,46 @@ impl PyGraph {
             .collect()
     }
 
-    fn query(&self, py: Python<'_>, spec: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+    #[pyo3(signature = (spec, profile=false))]
+    fn query(&self, py: Python<'_>, spec: &Bound<'_, PyAny>, profile: bool) -> PyResult<Py<PyAny>> {
         let spec = query_spec_from_py(spec)?;
-        let rows = self.core.borrow().query(&spec).map_err(to_py_value_error)?;
-        query_rows_to_py(py, &rows)
+        if profile {
+            let result = self
+                .core
+                .borrow()
+                .query_with_profile(&spec)
+                .map_err(to_py_value_error)?;
+            let dict = PyDict::new(py);
+            dict.set_item("rows", query_rows_to_py(py, &result.rows)?)?;
+            dict.set_item("profile", query_profile_to_py(py, &result.profile)?)?;
+            Ok(dict.into_any().unbind())
+        } else {
+            let rows = self.core.borrow().query(&spec).map_err(to_py_value_error)?;
+            query_rows_to_py(py, &rows)
+        }
     }
 
     fn query_schema(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         query_schema_to_py(py)
     }
 
-    #[pyo3(signature = (query, parameters=None))]
+    #[pyo3(signature = (query, parameters=None, profile=false))]
     fn cypher(
         &mut self,
         query: &str,
         parameters: Option<&Bound<'_, PyDict>>,
+        profile: bool,
     ) -> PyResult<PyCypherResult> {
         let params = params_from_py(parameters)?;
-        cypher::execute_autocommit(&mut self.core.borrow_mut(), query, &params)
-            .map(PyCypherResult::from)
-            .map_err(to_py_value_error)
+        if profile {
+            cypher::execute_autocommit_profiled(&mut self.core.borrow_mut(), query, &params)
+                .map(PyCypherResult::from)
+                .map_err(to_py_value_error)
+        } else {
+            cypher::execute_autocommit(&mut self.core.borrow_mut(), query, &params)
+                .map(PyCypherResult::from)
+                .map_err(to_py_value_error)
+        }
     }
 
     #[pyo3(signature = (write=true))]

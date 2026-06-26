@@ -57,6 +57,21 @@ The IDs are TongGraph internal node or edge IDs. Fetch records with
 `get_node()` or `get_edge()` when the caller needs labels, external IDs, or
 properties.
 
+Use `profile=True` to inspect the lightweight local plan used by the embedded
+executor:
+
+```python
+profiled = graph.query(spec, profile=True)
+print(profiled["rows"])
+print(profiled["profile"]["chosen_anchor_alias"])
+print(profiled["profile"]["expanded_edges"])
+```
+
+The profile reports the chosen anchor, candidate count, edge expansions, filtered
+records, result count, and elapsed nanoseconds. It is intended for local
+debugging, Text2Query validation, and benchmark artifacts rather than full
+server-style observability.
+
 ## Pattern Elements
 
 Node patterns support:

@@ -20,7 +20,10 @@ except ImportError as exc:  # pragma: no cover - exercised only before building.
         "`python scripts/build_python_extension.py` from the repository root."
     ) from exc
 
+from .helpers import install_graph_helpers
 from .query import query_dsl_schema, query_nl
+
+install_graph_helpers(Graph, GraphSnapshot)
 
 __all__ = [
     "Edge",

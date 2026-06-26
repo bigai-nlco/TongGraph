@@ -1,10 +1,13 @@
 /target/
 /.venv/
 /.pytest_cache/
+__pycache__/
+*.py[cod]
 /python/tonggraph/_tonggraph*.so
 /python/tonggraph/_tonggraph*.pyd
 /python/tonggraph/__pycache__/
 /tests/__pycache__/
+/tests/benchmark/.gbench/
 /site/
 /tmp/
 *.db

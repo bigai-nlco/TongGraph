@@ -41,6 +41,11 @@ class CypherResult:
         """Execution counters and statement metadata."""
         ...
 
+    @property
+    def profile(self) -> dict[str, Any] | None:
+        """Optional execution profile when the query was run with ``profile=True``."""
+        ...
+
     def __len__(self) -> int:
         """Return the number of result records."""
         ...
@@ -264,6 +269,14 @@ class GraphSnapshot:
         """Return the number of trace records."""
         ...
 
+    def schema(self) -> dict[str, Any]:
+        """Return graph schema metadata for Text2Query and retrieval planning."""
+        ...
+
+    def stats(self) -> dict[str, Any]:
+        """Return local graph, index, segment, and persistence statistics."""
+        ...
+
     def node_ids(self) -> list[int]:
         """Return live node IDs ordered by internal ID."""
         ...
@@ -414,7 +427,7 @@ class GraphSnapshot:
         """Run multiple compute jobs and return results in input order."""
         ...
 
-    def query(self, spec: Mapping[str, Any]) -> list[dict[str, int]]:
+    def query(self, spec: Mapping[str, Any], profile: bool = False) -> Any:
         """Run a structured path-pattern query and return alias-to-ID row bindings."""
         ...
 
@@ -422,10 +435,23 @@ class GraphSnapshot:
         """Return the structured query DSL schema."""
         ...
 
+    def export_nodes_jsonl(self, path: str, nodes: Sequence[int] | None = None) -> None:
+        """Export nodes to JSONL."""
+        ...
+
+    def export_edges_jsonl(self, path: str, edges: Sequence[int] | None = None) -> None:
+        """Export edges to JSONL."""
+        ...
+
+    def export_query_rows_jsonl(self, path: str, rows: Sequence[Mapping[str, Any]]) -> None:
+        """Export query or Cypher rows to JSONL."""
+        ...
+
     def cypher(
         self,
         query: str,
         parameters: Mapping[str, Any] | None = None,
+        profile: bool = False,
     ) -> CypherResult:
         """Run a read-only Cypher query against the snapshot."""
         ...
@@ -437,6 +463,7 @@ class GraphTransaction:
         self,
         query: str,
         parameters: Mapping[str, Any] | None = None,
+        profile: bool = False,
     ) -> CypherResult:
         """Run a Cypher query inside this transaction."""
         ...
@@ -612,10 +639,59 @@ class Graph(GraphSnapshot):
         """Reload a SQLite-backed graph from disk after another handle writes."""
         ...
 
+    def retrieve_context(
+        self,
+        *,
+        text_query: str | None = None,
+        text_index: str | None = None,
+        vector_query: Sequence[float] | None = None,
+        vector_index: str | None = None,
+        labels: Sequence[str] | None = None,
+        edge_type: str | None = None,
+        properties: Properties | None = None,
+        radius: int = 1,
+        direction: str = "both",
+        limit: int = 20,
+        text_weight: float = 1.0,
+        vector_weight: float = 1.0,
+        graph_weight: float = 0.1,
+    ) -> list[dict[str, Any]]:
+        """Return ranked context rows from text/vector candidates plus graph expansion."""
+        ...
+
+    def import_nodes_csv(self, path: str) -> list[int]:
+        """Import nodes from CSV and return created node IDs."""
+        ...
+
+    def import_edges_csv(self, path: str) -> list[int]:
+        """Import edges from CSV and return created edge IDs."""
+        ...
+
+    def import_nodes_jsonl(self, path: str) -> list[int]:
+        """Import nodes from JSONL and return created node IDs."""
+        ...
+
+    def import_edges_jsonl(self, path: str) -> list[int]:
+        """Import edges from JSONL and return created edge IDs."""
+        ...
+
+    def export_nodes_jsonl(self, path: str, nodes: Sequence[int] | None = None) -> None:
+        """Export nodes to JSONL."""
+        ...
+
+    def export_edges_jsonl(self, path: str, edges: Sequence[int] | None = None) -> None:
+        """Export edges to JSONL."""
+        ...
+
+    def export_query_rows_jsonl(self, path: str, rows: Sequence[Mapping[str, Any]]) -> None:
+        """Export query or Cypher rows to JSONL."""
+        ...
+
     def cypher(
         self,
         query: str,
         parameters: Mapping[str, Any] | None = None,
+        profile: bool = False,
     ) -> CypherResult:
         """Run a Cypher query in an autocommit transaction."""
         ...

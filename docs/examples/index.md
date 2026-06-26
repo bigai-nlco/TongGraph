@@ -20,3 +20,5 @@ python`.
   reopened indexes.
 - [Belief Propagation](belief-propagation.md): CPDs, active subgraph
   compilation, evidence, persisted posteriors, and traces.
+- [Benchmarks](benchmarks.md): JSON benchmark artifacts from `tests/benchmark`
+  for traversal, query, GraphRAG, persistence, and inference workloads.

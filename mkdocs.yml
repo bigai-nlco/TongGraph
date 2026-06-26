@@ -79,6 +79,7 @@ nav:
       - Local Probability Transfer: examples/local-probability-transfer.md
       - SQLite Reopen: examples/sqlite-reopen.md
       - Belief Propagation: examples/belief-propagation.md
+      - Benchmarks: examples/benchmarks.md
 
 plugins:
   - search

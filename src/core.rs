@@ -4,6 +4,7 @@ mod direction;
 mod entities;
 mod fulltext;
 mod inference;
+mod introspection;
 mod lifecycle;
 mod metadata;
 mod mutations;
@@ -14,14 +15,18 @@ mod traversal;
 mod vector;
 
 #[cfg(test)]
+#[path = "../tests/rs/core.rs"]
 mod tests;
 
 pub(crate) use algorithms::{ComputeJob, ComputeResult, ShortestPath};
 pub(crate) use fulltext::FullTextSearchOptions;
 pub(crate) use inference::{ActiveSubgraph, BeliefPropagationResult};
+pub(crate) use introspection::{
+    GraphPropertySchema, GraphSchema, GraphStats, LabelSchema, SegmentStats, TypeSchema,
+};
 pub(crate) use queries::{
     EdgePattern, NodePattern, PropertyConstraint, PropertyOperator, QueryDirection, QueryElement,
-    QueryRow, QuerySpec, QueryValue,
+    QueryProfile, QueryRow, QuerySpec, QueryValue,
 };
 pub(crate) use vector::VectorSearchOptions;
 

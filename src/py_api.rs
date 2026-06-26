@@ -3,6 +3,7 @@ mod cypher;
 mod fulltext;
 mod graph;
 mod inference;
+mod introspection;
 mod properties;
 mod query;
 mod records;

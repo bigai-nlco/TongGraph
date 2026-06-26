@@ -2,6 +2,7 @@ use crate::core::GraphCore;
 use crate::models::{EdgeRecord, NodeRecord, PropertyMap, PropertyValue};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
+use std::time::Instant;
 
 pub(crate) type CypherParams = BTreeMap<String, CypherValue>;
 
@@ -10,6 +11,7 @@ pub(crate) struct CypherResult {
     pub(crate) keys: Vec<String>,
     pub(crate) records: Vec<Vec<CypherValue>>,
     pub(crate) summary: CypherSummary,
+    pub(crate) profile: Option<CypherProfile>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -24,6 +26,15 @@ pub(crate) struct CypherSummary {
     pub(crate) nodes_deleted: usize,
     pub(crate) relationships_deleted: usize,
     pub(crate) rows: usize,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct CypherProfile {
+    pub(crate) statement_type: String,
+    pub(crate) clauses: Vec<String>,
+    pub(crate) plan_steps: Vec<String>,
+    pub(crate) rows: usize,
+    pub(crate) elapsed_ns: u128,
 }
 
 #[derive(Clone, Debug)]
@@ -61,7 +72,7 @@ struct ReturnQuery {
 #[derive(Clone, Debug)]
 struct MatchQuery {
     optional: bool,
-    pattern: Pattern,
+    patterns: Vec<Pattern>,
     where_terms: Vec<Predicate>,
     action: MatchAction,
 }
@@ -218,6 +229,22 @@ pub(crate) fn execute_autocommit(
     }
 }
 
+pub(crate) fn execute_autocommit_profiled(
+    core: &mut GraphCore,
+    query: &str,
+    params: &CypherParams,
+) -> Result<CypherResult, String> {
+    let plan = describe_query(query)?;
+    let start = Instant::now();
+    let mut result = execute_autocommit(core, query, params)?;
+    result.profile = Some(CypherProfile {
+        rows: result.summary.rows,
+        elapsed_ns: start.elapsed().as_nanos(),
+        ..plan
+    });
+    Ok(result)
+}
+
 pub(crate) fn execute_transaction(
     core: &mut GraphCore,
     query: &str,
@@ -226,6 +253,23 @@ pub(crate) fn execute_transaction(
 ) -> Result<CypherResult, String> {
     let query = parse_query(query)?;
     execute_query(core, &query, params, write_allowed)
+}
+
+pub(crate) fn execute_transaction_profiled(
+    core: &mut GraphCore,
+    query: &str,
+    params: &CypherParams,
+    write_allowed: bool,
+) -> Result<CypherResult, String> {
+    let plan = describe_query(query)?;
+    let start = Instant::now();
+    let mut result = execute_transaction(core, query, params, write_allowed)?;
+    result.profile = Some(CypherProfile {
+        rows: result.summary.rows,
+        elapsed_ns: start.elapsed().as_nanos(),
+        ..plan
+    });
+    Ok(result)
 }
 
 pub(crate) fn execute_snapshot(
@@ -240,6 +284,27 @@ pub(crate) fn execute_snapshot(
     execute_readonly(core, &query, params)
 }
 
+pub(crate) fn execute_snapshot_profiled(
+    core: &GraphCore,
+    query: &str,
+    params: &CypherParams,
+) -> Result<CypherResult, String> {
+    let plan = describe_query(query)?;
+    let start = Instant::now();
+    let mut result = execute_snapshot(core, query, params)?;
+    result.profile = Some(CypherProfile {
+        rows: result.summary.rows,
+        elapsed_ns: start.elapsed().as_nanos(),
+        ..plan
+    });
+    Ok(result)
+}
+
+pub(crate) fn describe_query(query: &str) -> Result<CypherProfile, String> {
+    let query = parse_query(query)?;
+    Ok(query.profile_plan())
+}
+
 impl Query {
     fn is_write(&self) -> bool {
         match &self.statement {
@@ -247,6 +312,98 @@ impl Query {
             Statement::Match(query) => !matches!(query.action, MatchAction::Return(_)),
             Statement::Union(queries) => queries.iter().any(Query::is_write),
             Statement::Return(_) => false,
+        }
+    }
+
+    fn profile_plan(&self) -> CypherProfile {
+        let statement_type = if self.is_write() { "write" } else { "read" }.to_string();
+        match &self.statement {
+            Statement::Return(_) => CypherProfile {
+                statement_type,
+                clauses: vec!["RETURN".to_string()],
+                plan_steps: vec!["project constant row".to_string()],
+                ..CypherProfile::default()
+            },
+            Statement::Match(query) => {
+                let action = match &query.action {
+                    MatchAction::Return(_) => "project rows",
+                    MatchAction::Update { .. } => "apply updates",
+                    MatchAction::Delete { detach, .. } if *detach => "detach delete",
+                    MatchAction::Delete { .. } => "delete",
+                };
+                let mut clauses = vec!["MATCH".to_string()];
+                if query.optional {
+                    clauses[0] = "OPTIONAL MATCH".to_string();
+                }
+                if !query.where_terms.is_empty() {
+                    clauses.push("WHERE".to_string());
+                }
+                clauses.push(action.to_ascii_uppercase());
+                CypherProfile {
+                    statement_type,
+                    clauses,
+                    plan_steps: vec![
+                        format!("match {} path pattern(s)", query.patterns.len()),
+                        format!(
+                            "match {} node pattern(s)",
+                            query
+                                .patterns
+                                .iter()
+                                .map(|pattern| pattern.nodes.len())
+                                .sum::<usize>()
+                        ),
+                        format!(
+                            "expand {} relationship pattern(s)",
+                            query
+                                .patterns
+                                .iter()
+                                .map(|pattern| pattern.rels.len())
+                                .sum::<usize>()
+                        ),
+                        action.to_string(),
+                    ],
+                    ..CypherProfile::default()
+                }
+            }
+            Statement::Create(query) => CypherProfile {
+                statement_type,
+                clauses: vec!["CREATE".to_string()],
+                plan_steps: vec![
+                    format!("create {} node pattern(s)", query.pattern.nodes.len()),
+                    format!(
+                        "create {} relationship pattern(s)",
+                        query.pattern.rels.len()
+                    ),
+                    "project write result".to_string(),
+                ],
+                ..CypherProfile::default()
+            },
+            Statement::Merge(query) => CypherProfile {
+                statement_type,
+                clauses: vec!["MERGE".to_string()],
+                plan_steps: vec![
+                    format!(
+                        "match-or-create {} node pattern(s)",
+                        query.pattern.nodes.len()
+                    ),
+                    format!(
+                        "match-or-create {} relationship pattern(s)",
+                        query.pattern.rels.len()
+                    ),
+                    "project write result".to_string(),
+                ],
+                ..CypherProfile::default()
+            },
+            Statement::Union(queries) => CypherProfile {
+                statement_type,
+                clauses: vec!["UNION".to_string()],
+                plan_steps: vec![
+                    format!("execute {} union branch(es)", queries.len()),
+                    "validate aligned return keys".to_string(),
+                    "concatenate branch rows".to_string(),
+                ],
+                ..CypherProfile::default()
+            },
         }
     }
 }
@@ -316,6 +473,7 @@ fn execute_union(
             rows,
             ..CypherSummary::default()
         },
+        profile: None,
     })
 }
 
@@ -339,7 +497,7 @@ fn execute_match(
     params: &CypherParams,
 ) -> Result<CypherResult, String> {
     validate_match_action(query)?;
-    let mut rows = match_pattern(core, &query.pattern, params)?;
+    let mut rows = match_patterns(core, &query.patterns, params)?;
     if !query.where_terms.is_empty() {
         rows.retain(|binding| predicates_match(core, binding, &query.where_terms, params));
     }
@@ -359,14 +517,16 @@ fn execute_match(
 
 fn validate_match_action(query: &MatchQuery) -> Result<(), String> {
     let mut aliases = BTreeMap::new();
-    for node in &query.pattern.nodes {
-        if let Some(var) = &node.var {
-            aliases.insert(var.clone(), true);
+    for pattern in &query.patterns {
+        for node in &pattern.nodes {
+            if let Some(var) = &node.var {
+                aliases.insert(var.clone(), true);
+            }
         }
-    }
-    for rel in &query.pattern.rels {
-        if let Some(var) = &rel.var {
-            aliases.insert(var.clone(), false);
+        for rel in &pattern.rels {
+            if let Some(var) = &rel.var {
+                aliases.insert(var.clone(), false);
+            }
         }
     }
     let require = |var: &str| {
@@ -447,6 +607,7 @@ fn execute_update(
             keys: Vec::new(),
             records: Vec::new(),
             summary,
+            profile: None,
         }),
     }
 }
@@ -713,6 +874,7 @@ fn execute_delete(
             rows: 0,
             ..CypherSummary::default()
         },
+        profile: None,
     })
 }
 
@@ -780,6 +942,7 @@ fn project_write_result(
                 keys: Vec::new(),
                 records: Vec::new(),
                 summary,
+                profile: None,
             })
         }
     }
@@ -863,6 +1026,44 @@ fn match_pattern(
         }
     }
     Ok(rows)
+}
+
+fn match_patterns(
+    core: &GraphCore,
+    patterns: &[Pattern],
+    params: &CypherParams,
+) -> Result<Vec<BindingMap>, String> {
+    let mut rows = vec![BindingMap::new()];
+    for pattern in patterns {
+        let pattern_rows = match_pattern(core, pattern, params)?;
+        let mut joined = Vec::new();
+        for existing in &rows {
+            for candidate in &pattern_rows {
+                if let Some(merged) = merge_bindings(existing, candidate) {
+                    joined.push(merged);
+                }
+            }
+        }
+        rows = joined;
+        if rows.is_empty() {
+            break;
+        }
+    }
+    Ok(rows)
+}
+
+fn merge_bindings(left: &BindingMap, right: &BindingMap) -> Option<BindingMap> {
+    let mut merged = left.clone();
+    for (key, right_value) in right {
+        match merged.get(key) {
+            Some(left_value) if !binding_eq(left_value, right_value) => return None,
+            Some(_) => {}
+            None => {
+                merged.insert(key.clone(), right_value.clone());
+            }
+        }
+    }
+    Some(merged)
 }
 
 fn expand_match(
@@ -1081,6 +1282,7 @@ fn project_rows(
                 rows: 1,
                 ..CypherSummary::default()
             },
+            profile: None,
         });
     }
 
@@ -1143,6 +1345,7 @@ fn project_rows(
             rows,
             ..CypherSummary::default()
         },
+        profile: None,
     })
 }
 
@@ -1394,7 +1597,7 @@ fn parse_match_query(query: &str, optional: bool) -> Result<Query, String> {
     ];
     let first_clause = next_clause_index(input, 0, &clauses)
         .ok_or_else(|| "MATCH query requires RETURN or a write clause".to_string())?;
-    let pattern = parse_pattern(input[..first_clause].trim())?;
+    let patterns = parse_match_patterns(input[..first_clause].trim())?;
     let mut cursor = first_clause;
     let mut where_terms = Vec::new();
 
@@ -1460,7 +1663,7 @@ fn parse_match_query(query: &str, optional: bool) -> Result<Query, String> {
             return Ok(Query {
                 statement: Statement::Match(MatchQuery {
                     optional,
-                    pattern,
+                    patterns,
                     where_terms,
                     action: MatchAction::Delete { detach, variables },
                 }),
@@ -1490,11 +1693,22 @@ fn parse_match_query(query: &str, optional: bool) -> Result<Query, String> {
     Ok(Query {
         statement: Statement::Match(MatchQuery {
             optional,
-            pattern,
+            patterns,
             where_terms,
             action,
         }),
     })
+}
+
+fn parse_match_patterns(input: &str) -> Result<Vec<Pattern>, String> {
+    let patterns = split_top_level(input, ',')
+        .into_iter()
+        .map(parse_pattern)
+        .collect::<Result<Vec<_>, _>>()?;
+    if patterns.is_empty() {
+        return Err("MATCH requires at least one pattern".to_string());
+    }
+    Ok(patterns)
 }
 
 fn parse_set_items(input: &str) -> Result<Vec<SetItem>, String> {

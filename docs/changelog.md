@@ -8,12 +8,22 @@
   word search, trigram substring search, filters, persistence, and snapshot reads.
 - Adds named vector indexes for caller-provided node and edge embeddings with
   deterministic cosine, dot-product, and Euclidean exact search.
+- Adds `Graph.schema()` / `Graph.stats()` and snapshot equivalents for
+  Text2Query, GraphRAG planning, and local diagnostics.
+- Adds `profile=True` for structured queries and embedded Cypher results.
+- Adds `Graph.retrieve_context()` for full-text/vector candidate retrieval plus
+  local graph expansion and ranking.
+- Adds CSV/JSONL import helpers, JSONL export helpers, and a JSON benchmark
+  runner under `tests/benchmark`.
 
 ### Changed
 
 - Completes the embedded Cypher CRUD subset with `SET`, `REMOVE`, `DELETE`,
   `DETACH DELETE`, direct Python graph mutation methods, and transactional
   stale-handle protection for consumed graph IDs.
+- Expands embedded Cypher reads with comma-separated multi-pattern `MATCH`.
+- Rebuilds the local PyO3 extension automatically before pytest when source
+  files are newer than the checked-in development extension artifact.
 
 ## 0.1.0
 
@@ -90,14 +100,3 @@ graph compute, and explicit finite-discrete belief propagation.
 - Runs residual asynchronous sum-product belief propagation with convergence
   diagnostics and warnings.
 - Supports persisted posteriors and traces for SQLite-backed graphs.
-
-### Documentation, Examples, And Packaging
-
-- Provides user docs for core concepts, quickstart, API reference, persistence,
-  algorithms, query layer, Cypher compatibility, local probability transfer,
-  and belief propagation.
-- Includes runnable examples for property graph basics, structured queries,
-  Cypher compatibility, runtime algorithms, SQLite reopen behavior, and
-  inference workflows.
-- Builds Python source distributions and platform wheels through the
-  `maturin`/`uv build` packaging path.

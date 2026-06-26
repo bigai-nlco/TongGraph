@@ -1,5 +1,5 @@
 use crate::core::GraphCore;
-use crate::cypher::{self, CypherParams, CypherResult, CypherSummary, CypherValue};
+use crate::cypher::{self, CypherParams, CypherProfile, CypherResult, CypherSummary, CypherValue};
 use crate::py_api::records::{PyEdge, PyNode};
 use crate::py_api::to_py_value_error;
 use pyo3::exceptions::PyValueError;
@@ -15,6 +15,7 @@ pub(crate) struct PyCypherResult {
     keys: Vec<String>,
     records: Vec<Vec<CypherValue>>,
     summary: CypherSummary,
+    profile: Option<CypherProfile>,
 }
 
 #[pymethods]
@@ -32,6 +33,14 @@ impl PyCypherResult {
     #[getter]
     fn summary(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         summary_to_py(py, &self.summary)
+    }
+
+    #[getter]
+    fn profile(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        match &self.profile {
+            Some(profile) => cypher_profile_to_py(py, profile),
+            None => Ok(py.None()),
+        }
     }
 
     fn __len__(&self) -> usize {
@@ -53,6 +62,7 @@ impl From<CypherResult> for PyCypherResult {
             keys: value.keys,
             records: value.records,
             summary: value.summary,
+            profile: value.profile,
         }
     }
 }
@@ -68,18 +78,23 @@ pub(crate) struct PyGraphTransaction {
 
 #[pymethods]
 impl PyGraphTransaction {
-    #[pyo3(signature = (query, parameters=None))]
+    #[pyo3(signature = (query, parameters=None, profile=false))]
     fn run(
         &mut self,
         query: &str,
         parameters: Option<&Bound<'_, PyDict>>,
+        profile: bool,
     ) -> PyResult<PyCypherResult> {
         self.ensure_active()?;
         let params = params_from_py(parameters)?;
         let mut next_staged = self.staged.snapshot();
-        let result = cypher::execute_transaction(&mut next_staged, query, &params, self.write)
-            .map(PyCypherResult::from)
-            .map_err(to_py_value_error)?;
+        let result = if profile {
+            cypher::execute_transaction_profiled(&mut next_staged, query, &params, self.write)
+        } else {
+            cypher::execute_transaction(&mut next_staged, query, &params, self.write)
+        }
+        .map(PyCypherResult::from)
+        .map_err(to_py_value_error)?;
         self.staged = next_staged;
         Ok(result)
     }
@@ -232,6 +247,16 @@ fn summary_to_py(py: Python<'_>, summary: &CypherSummary) -> PyResult<Py<PyAny>>
     dict.set_item("nodes_deleted", summary.nodes_deleted)?;
     dict.set_item("relationships_deleted", summary.relationships_deleted)?;
     dict.set_item("rows", summary.rows)?;
+    Ok(dict.into_any().unbind())
+}
+
+fn cypher_profile_to_py(py: Python<'_>, profile: &CypherProfile) -> PyResult<Py<PyAny>> {
+    let dict = PyDict::new(py);
+    dict.set_item("statement_type", &profile.statement_type)?;
+    dict.set_item("clauses", profile.clauses.clone())?;
+    dict.set_item("plan_steps", profile.plan_steps.clone())?;
+    dict.set_item("rows", profile.rows)?;
+    dict.set_item("elapsed_ns", profile.elapsed_ns)?;
     Ok(dict.into_any().unbind())
 }
 

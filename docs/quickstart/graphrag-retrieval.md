@@ -56,3 +56,28 @@ for row in context:
 This pattern keeps vector retrieval, full-text retrieval, and graph expansion as
 replaceable pieces. TongGraph owns the local graph structure and deterministic
 expansion.
+
+For the common case, `retrieve_context()` composes named full-text/vector indexes
+with local expansion and ranking:
+
+```python
+graph.create_fulltext_index("chunks", ["text"])
+graph.create_vector_index("chunks", dimensions=3)
+graph.upsert_vector("chunks", chunk, [1.0, 0.2, 0.4])
+
+rows = graph.retrieve_context(
+    text_index="chunks",
+    text_query="grounded generation",
+    vector_index="chunks",
+    vector_query=[1.0, 0.2, 0.4],
+    labels=["Chunk"],
+    radius=1,
+    limit=5,
+)
+
+for row in rows:
+    print(row["score"], row["record"].external_id)
+```
+
+TongGraph does not create embeddings or call a model provider. Applications own
+embedding generation and pass vectors into the local graph engine.

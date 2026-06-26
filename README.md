@@ -89,10 +89,17 @@ print(reopened.node_count())
 Run the Python tests and benchmark scripts:
 
 ```bash
+uv run python scripts/build_python_extension.py
 uv run pytest
+uv run python tests/benchmark/gbench.py --nodes 100 --degree 3 --repeat 3 --output /tmp/gbench.json
 uv run python scripts/benchmark_algorithms.py --nodes 1000 --degree 4 --repeat 2
 uv run python scripts/benchmark_belief_propagation.py --nodes 1000 --degree 4 --repeat 2
 ```
+
+For local development, `uv run pytest` rebuilds the in-place PyO3 extension when
+the checked-out Rust or Python sources are newer than the local extension
+artifact. Release validation should still run the build command explicitly
+before pytest.
 
 ## Documentation
 

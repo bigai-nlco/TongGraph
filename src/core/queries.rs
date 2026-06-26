@@ -5,6 +5,7 @@ use crate::models::{
     VariableRecord,
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::time::Instant;
 
 #[derive(Clone, Debug)]
 pub(crate) struct QuerySpec {
@@ -99,6 +100,26 @@ pub(crate) enum QueryValue {
 }
 
 pub(crate) type QueryRow = BTreeMap<String, u64>;
+
+#[derive(Clone, Debug)]
+pub(crate) struct QueryProfiledResult {
+    pub(crate) rows: Vec<QueryRow>,
+    pub(crate) profile: QueryProfile,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct QueryProfile {
+    pub(crate) plan_steps: Vec<String>,
+    pub(crate) chosen_anchor_index: usize,
+    pub(crate) chosen_anchor_alias: String,
+    pub(crate) anchor_candidates: usize,
+    pub(crate) expanded_edges: usize,
+    pub(crate) filtered_edges: usize,
+    pub(crate) filtered_nodes: usize,
+    pub(crate) alias_conflicts: usize,
+    pub(crate) result_count: usize,
+    pub(crate) elapsed_ns: u128,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum AliasKind {
@@ -216,33 +237,73 @@ impl GraphCore {
     }
 
     pub(crate) fn query(&self, spec: &QuerySpec) -> Result<Vec<QueryRow>, String> {
+        self.query_with_profile(spec).map(|result| result.rows)
+    }
+
+    pub(crate) fn query_with_profile(
+        &self,
+        spec: &QuerySpec,
+    ) -> Result<QueryProfiledResult, String> {
+        let start = Instant::now();
+        let mut profile = QueryProfile::default();
         let plan = self.validate_query(spec)?;
         let anchor = self.choose_anchor(spec)?;
         let QueryElement::Node(anchor_pattern) = &spec.elements[anchor] else {
             return Err("query anchor must be a node pattern".to_string());
         };
+        let candidates = self.node_candidates(anchor_pattern)?;
+        profile.chosen_anchor_index = anchor;
+        profile.chosen_anchor_alias = anchor_pattern.alias.clone();
+        profile.anchor_candidates = candidates.len();
+        profile.plan_steps = vec![
+            "validate path pattern".to_string(),
+            format!("choose node anchor {}", anchor_pattern.alias),
+            "expand left from anchor".to_string(),
+            "expand right from anchor".to_string(),
+            "project requested aliases".to_string(),
+        ];
 
         let mut rows = Vec::new();
-        for node_id in self.node_candidates(anchor_pattern)? {
+        for node_id in candidates {
             let mut bindings = QueryRow::new();
             if !bind_alias(&mut bindings, &anchor_pattern.alias, node_id) {
+                profile.alias_conflicts += 1;
                 continue;
             }
 
             let mut left_bindings = Vec::new();
-            self.expand_left(spec, anchor, node_id, bindings, &mut left_bindings)?;
+            self.expand_left(
+                spec,
+                anchor,
+                node_id,
+                bindings,
+                &mut left_bindings,
+                &mut profile,
+            )?;
             for binding in left_bindings {
                 let Some(&anchor_id) = binding.get(&anchor_pattern.alias) else {
                     continue;
                 };
-                self.expand_right(spec, anchor, anchor_id, binding, &plan, &mut rows)?;
+                self.expand_right(
+                    spec,
+                    anchor,
+                    anchor_id,
+                    binding,
+                    &plan,
+                    &mut rows,
+                    &mut profile,
+                )?;
                 if spec.limit.is_some_and(|limit| rows.len() >= limit) {
-                    return Ok(rows);
+                    profile.result_count = rows.len();
+                    profile.elapsed_ns = start.elapsed().as_nanos();
+                    return Ok(QueryProfiledResult { rows, profile });
                 }
             }
         }
 
-        Ok(rows)
+        profile.result_count = rows.len();
+        profile.elapsed_ns = start.elapsed().as_nanos();
+        Ok(QueryProfiledResult { rows, profile })
     }
 
     fn validate_query(&self, spec: &QuerySpec) -> Result<QueryPlan, String> {
@@ -375,6 +436,7 @@ impl GraphCore {
         current_node: u64,
         bindings: QueryRow,
         results: &mut Vec<QueryRow>,
+        profile: &mut QueryProfile,
     ) -> Result<(), String> {
         if node_index == 0 {
             results.push(bindings);
@@ -391,23 +453,29 @@ impl GraphCore {
         };
 
         for step in self.incident_edges_for_left_expansion(current_node, edge_pattern) {
+            profile.expanded_edges += 1;
             if !self.edge_matches(edge_pattern, step.edge_id) {
+                profile.filtered_edges += 1;
                 continue;
             }
             let Some(left_node) = self.get_node(step.next_node) else {
+                profile.filtered_nodes += 1;
                 continue;
             };
             if !node_matches(left_pattern, &left_node) {
+                profile.filtered_nodes += 1;
                 continue;
             }
 
             let mut next_bindings = bindings.clone();
             if let Some(edge_alias) = &edge_pattern.alias {
                 if !bind_alias(&mut next_bindings, edge_alias, step.edge_id) {
+                    profile.alias_conflicts += 1;
                     continue;
                 }
             }
             if !bind_alias(&mut next_bindings, &left_pattern.alias, step.next_node) {
+                profile.alias_conflicts += 1;
                 continue;
             }
             self.expand_left(
@@ -416,6 +484,7 @@ impl GraphCore {
                 step.next_node,
                 next_bindings,
                 results,
+                profile,
             )?;
         }
 
@@ -430,6 +499,7 @@ impl GraphCore {
         bindings: QueryRow,
         plan: &QueryPlan,
         rows: &mut Vec<QueryRow>,
+        profile: &mut QueryProfile,
     ) -> Result<(), String> {
         if spec.limit.is_some_and(|limit| rows.len() >= limit) {
             return Ok(());
@@ -452,23 +522,29 @@ impl GraphCore {
             if spec.limit.is_some_and(|limit| rows.len() >= limit) {
                 return Ok(());
             }
+            profile.expanded_edges += 1;
             if !self.edge_matches(edge_pattern, step.edge_id) {
+                profile.filtered_edges += 1;
                 continue;
             }
             let Some(right_node) = self.get_node(step.next_node) else {
+                profile.filtered_nodes += 1;
                 continue;
             };
             if !node_matches(right_pattern, &right_node) {
+                profile.filtered_nodes += 1;
                 continue;
             }
 
             let mut next_bindings = bindings.clone();
             if let Some(edge_alias) = &edge_pattern.alias {
                 if !bind_alias(&mut next_bindings, edge_alias, step.edge_id) {
+                    profile.alias_conflicts += 1;
                     continue;
                 }
             }
             if !bind_alias(&mut next_bindings, &right_pattern.alias, step.next_node) {
+                profile.alias_conflicts += 1;
                 continue;
             }
             self.expand_right(
@@ -478,6 +554,7 @@ impl GraphCore {
                 next_bindings,
                 plan,
                 rows,
+                profile,
             )?;
         }
 

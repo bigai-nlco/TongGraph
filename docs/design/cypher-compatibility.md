@@ -12,6 +12,10 @@ statements are staged on a snapshot and committed back to the graph only after
 the statement succeeds. SQLite-backed graphs persist the staged graph records in
 one SQLite transaction.
 
+Pass `profile=True` to attach a lightweight local plan summary to the returned
+`CypherResult.profile`. The profile includes statement type, detected clauses,
+plan steps, row count, and elapsed nanoseconds.
+
 `Graph.transaction(write=True)` returns a context manager with `run()`,
 `commit()`, and `rollback()`. Transaction writes are staged until commit. If the
 context exits with an exception, staged writes are discarded.
@@ -31,7 +35,7 @@ Cypher results contain:
 
 | Area | Status |
 |---|---|
-| `MATCH` | Single connected path pattern with node labels, one relationship type, directed or undirected expansion. |
+| `MATCH` | Connected path patterns with node labels, one relationship type per relationship pattern, directed or undirected expansion, and comma-separated multi-pattern joins on shared aliases. |
 | `OPTIONAL MATCH` | Supported for one pattern; returns one null-like row when no match is found. |
 | `WHERE` | `AND`-combined comparisons, `CONTAINS`, `IN`, scalar literals, parameters, variables, and property access. |
 | `RETURN` | Variables, properties, `id()`, `elementId()`, `labels()`, `type()`, `startNode()`, `endNode()`, `count(*)`, and `count(var)`. |

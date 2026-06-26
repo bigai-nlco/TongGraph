@@ -3,6 +3,7 @@ use super::compute::{
 };
 use super::cypher::{params_from_py, PyCypherResult};
 use super::fulltext::{definitions_to_py, search_results_to_py};
+use super::introspection::{graph_schema_to_py, graph_stats_to_py, query_profile_to_py};
 use super::properties::{optional_property_value_from_py, properties_from_py};
 use super::query::{query_rows_to_py, query_schema_to_py, query_spec_from_py};
 use super::records::{PyEdge, PyEvidence, PyFactor, PyNode, PyTrace, PyVariable};
@@ -127,6 +128,14 @@ impl PyGraphSnapshot {
 
     fn trace_count(&self) -> usize {
         self.core.trace_count()
+    }
+
+    fn schema(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        graph_schema_to_py(py, self.core.schema_summary())
+    }
+
+    fn stats(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        graph_stats_to_py(py, self.core.stats_summary())
     }
 
     fn node_ids(&self) -> Vec<u64> {
@@ -348,25 +357,44 @@ impl PyGraphSnapshot {
             .collect()
     }
 
-    fn query(&self, py: Python<'_>, spec: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+    #[pyo3(signature = (spec, profile=false))]
+    fn query(&self, py: Python<'_>, spec: &Bound<'_, PyAny>, profile: bool) -> PyResult<Py<PyAny>> {
         let spec = query_spec_from_py(spec)?;
-        let rows = self.core.query(&spec).map_err(to_py_value_error)?;
-        query_rows_to_py(py, &rows)
+        if profile {
+            let result = self
+                .core
+                .query_with_profile(&spec)
+                .map_err(to_py_value_error)?;
+            let dict = PyDict::new(py);
+            dict.set_item("rows", query_rows_to_py(py, &result.rows)?)?;
+            dict.set_item("profile", query_profile_to_py(py, &result.profile)?)?;
+            Ok(dict.into_any().unbind())
+        } else {
+            let rows = self.core.query(&spec).map_err(to_py_value_error)?;
+            query_rows_to_py(py, &rows)
+        }
     }
 
     fn query_schema(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         query_schema_to_py(py)
     }
 
-    #[pyo3(signature = (query, parameters=None))]
+    #[pyo3(signature = (query, parameters=None, profile=false))]
     fn cypher(
         &self,
         query: &str,
         parameters: Option<&Bound<'_, PyDict>>,
+        profile: bool,
     ) -> PyResult<PyCypherResult> {
         let params = params_from_py(parameters)?;
-        cypher::execute_snapshot(&self.core, query, &params)
-            .map(PyCypherResult::from)
-            .map_err(to_py_value_error)
+        if profile {
+            cypher::execute_snapshot_profiled(&self.core, query, &params)
+                .map(PyCypherResult::from)
+                .map_err(to_py_value_error)
+        } else {
+            cypher::execute_snapshot(&self.core, query, &params)
+                .map(PyCypherResult::from)
+                .map_err(to_py_value_error)
+        }
     }
 }

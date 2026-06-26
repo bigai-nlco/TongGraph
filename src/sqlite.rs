@@ -18,6 +18,7 @@ const SQLITE_OK: c_int = 0;
 const SQLITE_ROW: c_int = 100;
 const SQLITE_DONE: c_int = 101;
 const SQLITE_NULL: c_int = 5;
+const SQLITE_DBCONFIG_DEFENSIVE: c_int = 1010;
 
 type Sqlite3 = c_void;
 type Sqlite3Stmt = c_void;
@@ -68,6 +69,7 @@ extern "C" {
     fn sqlite3_column_bytes(stmt: *mut Sqlite3Stmt, index: c_int) -> c_int;
     fn sqlite3_column_text(stmt: *mut Sqlite3Stmt, index: c_int) -> *const c_uchar;
     fn sqlite3_column_type(stmt: *mut Sqlite3Stmt, index: c_int) -> c_int;
+    fn sqlite3_db_config(db: *mut Sqlite3, op: c_int, ...) -> c_int;
 }
 
 pub(crate) trait GraphStore {
@@ -493,12 +495,61 @@ impl SqliteStore {
         if self.exec(&integrity_check).is_ok() {
             return Ok(false);
         }
-        self.exec(&format!("DROP TABLE IF EXISTS {table};"))
-            .map_err(|error| {
-                format!("failed to remove corrupt SQLite FTS5 table {table:?}: {error}")
-            })?;
+        if self
+            .exec(&format!("DROP TABLE IF EXISTS {table};"))
+            .is_err()
+        {
+            self.remove_corrupt_fulltext_schema_entries(table)?;
+        }
         self.ensure_fulltext_table(tokenizer)?;
         Ok(true)
+    }
+
+    fn remove_corrupt_fulltext_schema_entries(&self, table: &str) -> Result<(), String> {
+        let mut previous_defensive: c_int = 0;
+        let disable_defensive = unsafe {
+            sqlite3_db_config(
+                self.db,
+                SQLITE_DBCONFIG_DEFENSIVE,
+                0,
+                &mut previous_defensive as *mut c_int,
+            )
+        };
+        if disable_defensive != SQLITE_OK {
+            return Err(format!(
+                "failed to disable SQLite defensive mode for corrupt FTS5 cleanup: {}",
+                sqlite_error(self.db)
+            ));
+        }
+
+        let result = (|| {
+            self.exec("PRAGMA writable_schema=ON;")?;
+            self.exec(&format!(
+                "DELETE FROM sqlite_schema WHERE name = '{table}' OR name LIKE '{table}_%';"
+            ))?;
+            self.exec("PRAGMA writable_schema=RESET;")?;
+            self.exec("PRAGMA writable_schema=OFF;")
+        })();
+
+        let mut ignored: c_int = 0;
+        let restore_defensive = unsafe {
+            sqlite3_db_config(
+                self.db,
+                SQLITE_DBCONFIG_DEFENSIVE,
+                previous_defensive,
+                &mut ignored as *mut c_int,
+            )
+        };
+        if restore_defensive != SQLITE_OK {
+            return Err(format!(
+                "failed to restore SQLite defensive mode after corrupt FTS5 cleanup: {}",
+                sqlite_error(self.db)
+            ));
+        }
+
+        result.map_err(|error| {
+            format!("failed to remove corrupt SQLite FTS5 schema entries for {table:?}: {error}")
+        })
     }
 
     fn ensure_fulltext_table(&self, tokenizer: &str) -> Result<(), String> {

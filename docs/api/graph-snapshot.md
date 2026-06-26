@@ -16,6 +16,7 @@ handle.
 | `random_walk` | [Random walk](../design/algorithms.md#random-walk) |
 | `subgraph`, `compute_batch` | [Batch compute and snapshots](../design/algorithms.md#batch-compute) |
 | `query`, `query_schema` | [Structured path-pattern query DSL](../design/query-layer.md) |
+| `schema`, `stats` | Graph introspection for frozen views |
 | `fulltext_indexes`, `search_text` | [Full-text search](../design/fulltext-search.md) |
 | `vector_indexes`, `get_vector`, `search_vector` | [Vector search](../design/vector-search.md) |
 | `cypher` | [Cypher compatibility](../design/cypher-compatibility.md) |

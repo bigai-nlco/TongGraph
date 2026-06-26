@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from sqlite3 import connect
 
@@ -1338,3 +1339,95 @@ def test_categorical_belief_propagation_uses_public_python_api_ordering() -> Non
     assert stopped["converged"] is False
     assert stopped["diagnostics"]["max_iters"] == 0
     assert any("did not converge" in warning for warning in stopped["warnings"])
+
+
+def test_v020_schema_stats_profiles_retrieval_and_import_export(tmp_path: Path) -> None:
+    graph = Graph()
+    alice = graph.add_node(
+        "alice",
+        labels=["Person", "Document"],
+        properties={"name": "Alice", "text": "graph memory retrieval", "rank": 2},
+    )
+    bob = graph.add_node(
+        "bob",
+        labels=["Person"],
+        properties={"name": "Bob", "text": "agent memory", "rank": 1},
+    )
+    carol = graph.add_node("carol", labels=["Person"], properties={"name": "Carol"})
+    graph.add_edge(alice, bob, "KNOWS", properties={"weight": 0.7})
+    graph.add_edge(bob, carol, "KNOWS", properties={"weight": 0.5})
+    graph.create_fulltext_index("people", ["text"])
+    graph.create_vector_index("people", 2)
+    graph.upsert_vectors("people", {alice: [1.0, 0.0], bob: [0.8, 0.2]})
+
+    schema = graph.schema()
+    assert {"name": "Person", "count": 3} in schema["labels"]
+    assert any(prop["key"] == "rank" and "int" in prop["types"] for prop in schema["node_properties"])
+    stats = graph.stats()
+    assert stats["persistence_mode"] == "memory"
+    assert stats["nodes"] == 3
+    assert stats["fulltext_indexes"] == 1
+    assert stats["vector_indexes"] == 1
+
+    spec = {
+        "match": [
+            {"node": "a", "external_id": "alice"},
+            {"edge": "r", "type": "KNOWS"},
+            {"node": "b"},
+        ],
+        "return": ["a", "b"],
+    }
+    profiled = graph.query(spec, profile=True)
+    assert profiled["rows"] == [{"a": alice, "b": bob}]
+    assert profiled["profile"]["chosen_anchor_alias"] == "a"
+    assert profiled["profile"]["result_count"] == 1
+
+    cypher = graph.cypher(
+        "MATCH (a {external_id: 'alice'})-[:KNOWS]->(b), (b)-[:KNOWS]->(c) RETURN c.name AS name",
+        profile=True,
+    )
+    assert cypher.records == [{"name": "Carol"}]
+    assert cypher.profile["rows"] == 1
+    assert "MATCH" in cypher.profile["clauses"]
+
+    context = graph.retrieve_context(
+        text_index="people",
+        text_query="graph memory",
+        vector_index="people",
+        vector_query=[1.0, 0.0],
+        labels=["Person"],
+        radius=1,
+        limit=3,
+    )
+    assert context[0]["kind"] == "node"
+    assert context[0]["record"].id == alice
+    assert "text" in context[0]["source_scores"]
+
+    nodes_path = tmp_path / "nodes.jsonl"
+    edges_path = tmp_path / "edges.jsonl"
+    rows_path = tmp_path / "rows.jsonl"
+    graph.export_nodes_jsonl(nodes_path)
+    graph.export_edges_jsonl(edges_path)
+    graph.export_query_rows_jsonl(rows_path, cypher.records)
+    assert json.loads(nodes_path.read_text().splitlines()[0])["external_id"] == "alice"
+    assert json.loads(edges_path.read_text().splitlines()[0])["edge_type"] == "KNOWS"
+    assert json.loads(rows_path.read_text().splitlines()[0]) == {"name": "Carol"}
+
+    imported = Graph()
+    imported_node_path = tmp_path / "import_nodes.csv"
+    imported_edge_path = tmp_path / "import_edges.csv"
+    imported_node_path.write_text(
+        "external_id,labels,properties\n"
+        'doc,Document|Chunk,"{""title"": ""Doc"", ""rank"": 3}"\n',
+        encoding="utf-8",
+    )
+    imported.import_nodes_csv(imported_node_path)
+    imported_edge_path.write_text(
+        "source,target,edge_type,weight\n"
+        "doc,doc,SELF,1.0\n",
+        encoding="utf-8",
+    )
+    imported.import_edges_csv(imported_edge_path)
+    assert imported.node_count() == 1
+    assert imported.edge_count() == 1
+    assert imported.get_node(0).properties["rank"] == 3

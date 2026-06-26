@@ -245,6 +245,20 @@ class GraphSnapshot:
         """Search a named vector index by exact similarity."""
         ...
 
+    def search_vectors(
+        self,
+        index_name: str,
+        query_vectors: Sequence[Sequence[float]],
+        labels: Sequence[str] | None = None,
+        edge_type: str | None = None,
+        properties: Properties | None = None,
+        min_score: float | None = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> list[list[dict[str, Any]]]:
+        """Search a named vector index for multiple query vectors."""
+        ...
+
     def node_count(self) -> int:
         """Return the number of live nodes."""
         ...

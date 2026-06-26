@@ -348,6 +348,13 @@ def test_vector_search_in_memory_lifecycle_filters_and_snapshot() -> None:
     )
     assert [result["id"] for result in results] == [guide, notes]
     assert results[0] == {"kind": "node", "id": guide, "score": 1.0}
+    batches = graph.search_vectors(
+        "documents",
+        [[1.0, 0.0, 0.0], [0.5, 0.5, 0.0]],
+        labels=["Document"],
+        limit=1,
+    )
+    assert [[result["id"] for result in batch] for batch in batches] == [[guide], [notes]]
     assert graph.search_vector(
         "documents",
         [1.0, 0.0, 0.0],
@@ -363,6 +370,9 @@ def test_vector_search_in_memory_lifecycle_filters_and_snapshot() -> None:
     subgraph = graph.subgraph([guide, target])
     graph.upsert_vector("documents", guide, [0.0, 1.0, 0.0])
     assert snapshot.get_vector("documents", guide) == [1.0, 0.0, 0.0]
+    assert snapshot.search_vectors("documents", [[1.0, 0.0, 0.0]], limit=1)[0][0][
+        "id"
+    ] == guide
     assert subgraph.get_vector("documents", guide) == [1.0, 0.0, 0.0]
     with pytest.raises(ValueError, match="not found"):
         subgraph.get_vector("documents", notes)
@@ -380,6 +390,8 @@ def test_vector_search_in_memory_lifecycle_filters_and_snapshot() -> None:
         graph.search_vector("documents", [1.0, 0.0, 0.0], edge_type="CITES")
     with pytest.raises(ValueError, match="dimensions"):
         graph.search_vector("documents", [1.0, 0.0])
+    with pytest.raises(ValueError, match="index 1"):
+        graph.search_vectors("documents", [[1.0, 0.0, 0.0], [1.0, 0.0]])
     graph.drop_vector_index("relations")
 
 

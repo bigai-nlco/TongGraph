@@ -1,0 +1,19 @@
+[project]
+name = "tonggraph-wiki-search-example"
+version = "0.1.0"
+description = "TongGraph-backed Wikidata and Wikipedia vector search example."
+requires-python = ">=3.10"
+dependencies = [
+    "tonggraph",
+    "fastapi>=0.115",
+    "pydantic>=2.8",
+    "uvicorn[standard]>=0.30",
+]
+
+[project.optional-dependencies]
+embeddings = [
+    "sentence-transformers>=3.0",
+]
+
+[tool.uv.sources]
+tonggraph = { path = "../..", editable = true }

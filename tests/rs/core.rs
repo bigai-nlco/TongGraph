@@ -1473,6 +1473,23 @@ fn in_memory_vector_search_supports_metrics_filters_snapshots_and_subgraphs() {
     );
     assert_close(results[0].score, 1.0);
     assert!(results[1].score < results[0].score);
+    let batches = graph
+        .search_vectors(
+            "documents",
+            &vec![vec![1.0, 0.0, 0.0], vec![0.5, 0.5, 0.0]],
+            &VectorSearchOptions {
+                labels: vec!["Document".to_string()],
+                edge_type: None,
+                properties: PropertyMap::new(),
+                min_score: None,
+                limit: 1,
+                offset: 0,
+            },
+        )
+        .unwrap();
+    assert_eq!(batches.len(), 2);
+    assert_eq!(batches[0][0].id, a);
+    assert_eq!(batches[1][0].id, b);
 
     let filtered = graph
         .search_vector(
@@ -1658,6 +1675,10 @@ fn vector_search_validates_batches_and_supports_dot_ties() {
             },
         )
         .is_err());
+    assert!(graph
+        .search_vectors("dot", &vec![vec![1.0, 0.0], vec![1.0]], &vector_options())
+        .unwrap_err()
+        .contains("index 1"));
 }
 
 #[test]

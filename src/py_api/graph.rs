@@ -13,6 +13,7 @@ use super::records::{PyEdge, PyEvidence, PyFactor, PyNode, PyTrace, PyVariable};
 use super::snapshot::PyGraphSnapshot;
 use super::to_py_value_error;
 use super::vector::{
+    batch_search_results_to_py as vector_batch_results_to_py,
     definitions_to_py as vector_definitions_to_py, search_results_to_py as vector_results_to_py,
     vectors_from_py,
 };
@@ -306,6 +307,35 @@ impl PyGraph {
             .search_vector(&index_name, &query_vector, &options)
             .map_err(to_py_value_error)?;
         vector_results_to_py(py, results)
+    }
+
+    #[pyo3(signature = (index_name, query_vectors, labels=None, edge_type=None, properties=None, min_score=None, limit=20, offset=0))]
+    fn search_vectors(
+        &self,
+        py: Python<'_>,
+        index_name: String,
+        query_vectors: Vec<Vec<f64>>,
+        labels: Option<Vec<String>>,
+        edge_type: Option<String>,
+        properties: Option<&Bound<'_, PyDict>>,
+        min_score: Option<f64>,
+        limit: usize,
+        offset: usize,
+    ) -> PyResult<Py<PyAny>> {
+        let options = VectorSearchOptions {
+            labels: labels.unwrap_or_default(),
+            edge_type,
+            properties: properties_from_py(properties)?,
+            min_score,
+            limit,
+            offset,
+        };
+        let results = self
+            .core
+            .borrow()
+            .search_vectors(&index_name, &query_vectors, &options)
+            .map_err(to_py_value_error)?;
+        vector_batch_results_to_py(py, results)
     }
 
     fn node_count(&self) -> usize {

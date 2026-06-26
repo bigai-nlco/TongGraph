@@ -36,6 +36,25 @@ pub(super) fn search_results_to_py(
     Ok(output.into_any().unbind())
 }
 
+pub(super) fn batch_search_results_to_py(
+    py: Python<'_>,
+    batches: Vec<Vec<VectorSearchResult>>,
+) -> PyResult<Py<PyAny>> {
+    let output = PyList::empty(py);
+    for results in batches {
+        let batch = PyList::empty(py);
+        for result in results {
+            let item = PyDict::new(py);
+            item.set_item("kind", result.kind)?;
+            item.set_item("id", result.id)?;
+            item.set_item("score", result.score)?;
+            batch.append(item)?;
+        }
+        output.append(batch)?;
+    }
+    Ok(output.into_any().unbind())
+}
+
 pub(super) fn vectors_from_py(vectors: &Bound<'_, PyDict>) -> PyResult<Vec<(u64, Vec<f64>)>> {
     let mut output = Vec::with_capacity(vectors.len());
     for (entity_id, vector) in vectors.iter() {

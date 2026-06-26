@@ -68,6 +68,21 @@ score and then ascending entity ID. Node indexes accept all-label and exact scal
 property filters. Edge indexes accept one `edge_type` and exact scalar property
 filters.
 
+Use `search_vectors()` when many queries share the same index and filters:
+
+```python
+batch_results = graph.search_vectors(
+    "documents",
+    [first_query_embedding, second_query_embedding],
+    labels=["Document"],
+    limit=10,
+)
+```
+
+It returns one result list per query vector in input order. The implementation
+still uses deterministic exact search; batching keeps repeated query loops inside
+the Rust core and avoids per-query Python boundary overhead.
+
 Supported metrics are:
 
 | Metric | Score |

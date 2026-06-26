@@ -172,8 +172,42 @@ impl GraphCore {
         let definition = self.require_vector_index(index_name)?;
         validate_search(definition, options)?;
         let query = validate_vector(definition, query_vector, "query vector")?;
+        Ok(self.search_validated_vector(definition, &query, options))
+    }
+
+    pub(crate) fn search_vectors(
+        &self,
+        index_name: &str,
+        query_vectors: &[Vec<f64>],
+        options: &VectorSearchOptions,
+    ) -> Result<Vec<Vec<VectorSearchResult>>, String> {
+        let definition = self.require_vector_index(index_name)?;
+        validate_search(definition, options)?;
+        let queries = query_vectors
+            .iter()
+            .enumerate()
+            .map(|(index, query_vector)| {
+                validate_vector(
+                    definition,
+                    query_vector,
+                    &format!("query vector at index {index}"),
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(queries
+            .iter()
+            .map(|query| self.search_validated_vector(definition, query, options))
+            .collect())
+    }
+
+    fn search_validated_vector(
+        &self,
+        definition: &VectorIndexDefinition,
+        query: &[f32],
+        options: &VectorSearchOptions,
+    ) -> Vec<VectorSearchResult> {
         let empty = HashMap::new();
-        let vectors = self.vectors.get(index_name).unwrap_or(&empty);
+        let vectors = self.vectors.get(&definition.name).unwrap_or(&empty);
         let mut results = Vec::new();
         for (&entity_id, vector) in vectors {
             let matches = match definition.target.as_str() {
@@ -204,7 +238,7 @@ impl GraphCore {
             if !matches {
                 continue;
             }
-            let score = similarity(&definition.metric, &query, vector);
+            let score = similarity(&definition.metric, query, vector);
             if options.min_score.is_some_and(|minimum| score < minimum) {
                 continue;
             }
@@ -221,11 +255,11 @@ impl GraphCore {
                 .unwrap_or(Ordering::Equal)
                 .then_with(|| left.id.cmp(&right.id))
         });
-        Ok(results
+        results
             .into_iter()
             .skip(options.offset)
             .take(options.limit)
-            .collect())
+            .collect()
     }
 
     pub(super) fn load_vector_state(

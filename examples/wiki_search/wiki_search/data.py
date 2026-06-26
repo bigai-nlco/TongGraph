@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import gzip
+import itertools
 import json
 import re
 import urllib.request
@@ -11,6 +12,7 @@ from typing import Any
 
 
 WIKIDATA_ENTITY_URL = "https://www.wikidata.org/wiki/Special:EntityData/{qid}.json"
+HF_WIKIPEDIA_DATASET = "wikimedia/wikipedia"
 
 
 @dataclass
@@ -21,6 +23,7 @@ class WikiEntity:
     aliases: list[str] = field(default_factory=list)
     enwiki_title: str = ""
     wiki_text: str = ""
+    url: str = ""
     claims: list[tuple[str, str]] = field(default_factory=list)
 
     @property
@@ -82,6 +85,66 @@ def load_entities_from_wikidata(
     return entities
 
 
+def iter_hf_wikipedia_entities(
+    *,
+    dataset_name: str = HF_WIKIPEDIA_DATASET,
+    dataset_config: str = "20231101.en",
+    split: str = "train",
+    start: int = 0,
+    limit: int | None = None,
+) -> Iterator[tuple[int, WikiEntity]]:
+    """Stream normalized Wikipedia articles from Hugging Face datasets.
+
+    The yielded integer is the zero-based source row index. Persist it after
+    each committed batch so a later run can resume with ``start=next_index``.
+    """
+
+    if start < 0:
+        raise ValueError("start must be zero or greater")
+    if limit is not None and limit < 0:
+        raise ValueError("limit must be zero or greater")
+
+    try:
+        from datasets import load_dataset
+    except ImportError as exc:  # pragma: no cover - optional dependency.
+        raise RuntimeError(
+            "Install Hugging Face dataset dependencies with "
+            "`uv sync --extra wikipedia --extra embeddings`."
+        ) from exc
+
+    stream = load_dataset(
+        dataset_name,
+        dataset_config,
+        split=split,
+        streaming=True,
+    )
+    stop = None if limit is None else start + limit
+    for index, record in enumerate(itertools.islice(stream, start, stop), start):
+        entity = normalize_wikipedia_record(record, dataset_config=dataset_config)
+        if entity is not None:
+            yield index, entity
+
+
+def normalize_wikipedia_record(
+    record: dict[str, Any],
+    *,
+    dataset_config: str = "20231101.en",
+) -> WikiEntity | None:
+    article_id = str(record.get("id") or "").strip()
+    title = str(record.get("title") or article_id).strip()
+    text = str(record.get("text") or "").strip()
+    if not article_id or not title or not text:
+        return None
+    return WikiEntity(
+        qid=f"wikipedia:{dataset_config}:{article_id}",
+        label=title,
+        description=f"Wikipedia article {article_id}",
+        enwiki_title=title,
+        wiki_text=text,
+        url=str(record.get("url") or ""),
+    )
+
+
 def chunks_from_entities(entities: Iterable[WikiEntity], *, max_chars: int = 900) -> list[WikiChunk]:
     chunks = []
     for entity in entities:
@@ -95,7 +158,7 @@ def chunks_from_entities(entities: Iterable[WikiEntity], *, max_chars: int = 900
                     entity_qid=entity.qid,
                     title=entity.label or entity.qid,
                     text=chunk,
-                    source="wikidata+wiki_text",
+                    source=entity.url or "wikidata+wiki_text",
                     ordinal=ordinal,
                 )
             )
@@ -140,6 +203,7 @@ def normalize_entity_record(record: dict[str, Any], *, language: str = "en") -> 
             aliases=[str(alias) for alias in record.get("aliases", [])],
             enwiki_title=str(record.get("enwiki_title") or record.get("title") or label),
             wiki_text=str(record.get("wiki_text") or record.get("text") or ""),
+            url=str(record.get("url") or ""),
             claims=claims,
         )
 
@@ -161,6 +225,7 @@ def normalize_entity_record(record: dict[str, Any], *, language: str = "en") -> 
         aliases=aliases,
         enwiki_title=str(enwiki_title),
         wiki_text=str(record.get("wiki_text") or record.get("text") or ""),
+        url=str(record.get("url") or ""),
         claims=_extract_claim_edges(record.get("claims", {})),
     )
 
@@ -175,13 +240,20 @@ def merge_entity(left: WikiEntity, right: WikiEntity) -> WikiEntity:
         aliases=aliases,
         enwiki_title=right.enwiki_title or left.enwiki_title,
         wiki_text=right.wiki_text or left.wiki_text,
+        url=right.url or left.url,
         claims=claims,
     )
 
 
-def write_entities_jsonl(path: Path, entities: Iterable[WikiEntity]) -> None:
+def write_entities_jsonl(
+    path: Path,
+    entities: Iterable[WikiEntity],
+    *,
+    append: bool = False,
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as handle:
+    mode = "a" if append else "w"
+    with path.open(mode, encoding="utf-8") as handle:
         for entity in entities:
             payload = {
                 "qid": entity.qid,
@@ -190,6 +262,7 @@ def write_entities_jsonl(path: Path, entities: Iterable[WikiEntity]) -> None:
                 "aliases": entity.aliases,
                 "enwiki_title": entity.enwiki_title,
                 "wiki_text": entity.wiki_text,
+                "url": entity.url,
                 "claims": [
                     {"property": prop, "target": target} for prop, target in entity.claims
                 ],

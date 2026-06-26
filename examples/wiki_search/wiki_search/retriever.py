@@ -40,7 +40,7 @@ class WikiGraphRetriever:
         self.embedding_provider = create_embedding_provider(
             embedding_backend,
             dimensions=int(definition["dimensions"]),
-            model_name=embedding_model,
+            model_name=embedding_model or definition.get("model"),
         )
         if self.embedding_provider.dimensions != int(definition["dimensions"]):
             raise ValueError(
@@ -75,12 +75,23 @@ class WikiGraphRetriever:
             raise ValueError("top_k must be greater than zero")
         vectors = self.embedding_provider.embed_texts(queries, role="query")
         with self._lock:
-            batches = self.graph.search_vectors(
-                self.vector_index,
-                vectors,
-                labels=labels or ["WikiChunk"],
-                limit=top_k,
-            )
+            if hasattr(self.graph, "search_vectors"):
+                batches = self.graph.search_vectors(
+                    self.vector_index,
+                    vectors,
+                    labels=labels or ["WikiChunk"],
+                    limit=top_k,
+                )
+            else:
+                batches = [
+                    self.graph.search_vector(
+                        self.vector_index,
+                        vector,
+                        labels=labels or ["WikiChunk"],
+                        limit=top_k,
+                    )
+                    for vector in vectors
+                ]
             return [
                 [
                     self._format_hit(row, expand_hops=expand_hops)

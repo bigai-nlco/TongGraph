@@ -4,7 +4,14 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from wiki_search.builder import BuildConfig, build_wiki_graph, write_summary
+from wiki_search.builder import (
+    BuildConfig,
+    HFWikipediaBuildConfig,
+    build_hf_wikipedia_graph,
+    build_wiki_graph,
+    write_hf_summary,
+    write_summary,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -27,6 +34,54 @@ def parse_args() -> argparse.Namespace:
             "Use records shaped like data/sample_wikidata.jsonl or Wikidata "
             "entity JSON dump records."
         ),
+    )
+    parser.add_argument(
+        "--hf-wikipedia",
+        action="store_true",
+        help="Stream Wikipedia articles from the Hugging Face wikimedia/wikipedia dataset.",
+    )
+    parser.add_argument(
+        "--hf-dataset",
+        default="wikimedia/wikipedia",
+        help="Hugging Face dataset id for --hf-wikipedia.",
+    )
+    parser.add_argument(
+        "--hf-config",
+        default="20231101.en",
+        help="Hugging Face dataset config for --hf-wikipedia.",
+    )
+    parser.add_argument(
+        "--hf-split",
+        default="train",
+        help="Hugging Face dataset split for --hf-wikipedia.",
+    )
+    parser.add_argument(
+        "--hf-start",
+        type=int,
+        help="Zero-based streaming row offset. Overrides --resume-state when set.",
+    )
+    parser.add_argument(
+        "--hf-max-records",
+        type=int,
+        default=10000,
+        help="Maximum Hugging Face streaming rows to process in this run.",
+    )
+    parser.add_argument(
+        "--resume-state",
+        type=Path,
+        default=Path("search_data/hf_wikipedia_state.json"),
+        help="JSON cursor used to continue Hugging Face streaming builds.",
+    )
+    parser.add_argument(
+        "--progress-every",
+        type=int,
+        default=1000,
+        help="Print progress every N Hugging Face records. Use 0 to disable.",
+    )
+    parser.add_argument(
+        "--hf-article-chunks",
+        action="store_true",
+        help="Store and embed one full-text chunk per streamed Wikipedia row.",
     )
     parser.add_argument(
         "--download-qid",
@@ -77,6 +132,37 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    if args.hf_wikipedia:
+        config = HFWikipediaBuildConfig(
+            db_path=args.db_path,
+            dataset_name=args.hf_dataset,
+            dataset_config=args.hf_config,
+            split=args.hf_split,
+            start=args.hf_start,
+            max_records=args.hf_max_records,
+            resume_state=args.resume_state,
+            chunk_chars=args.chunk_chars,
+            batch_size=args.batch_size,
+            embedding_backend=args.embedding_backend,
+            embedding_dimensions=args.embedding_dimensions,
+            embedding_model=args.embedding_model or "intfloat/e5-base-v2",
+            replace=not args.append,
+            normalized_jsonl=args.normalized_jsonl,
+            progress_every=args.progress_every,
+            article_chunks=args.hf_article_chunks,
+        )
+        summary = build_hf_wikipedia_graph(config)
+        write_hf_summary(args.summary, summary, config=config)
+        print(f"Built TongGraph wiki DB from Hugging Face Wikipedia: {summary.db_path}")
+        print(
+            f"Indexed records this run: {summary.entities}, chunks: {summary.chunks}, "
+            f"total edges: {summary.edges}"
+        )
+        print(f"Vector index: {summary.vector_index} ({summary.embedding_dimensions} dims)")
+        print(f"Resume state: {args.resume_state}")
+        print(f"Summary: {args.summary}")
+        return
+
     config = BuildConfig(
         db_path=args.db_path,
         source_paths=args.source,

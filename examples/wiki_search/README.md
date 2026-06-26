@@ -40,6 +40,8 @@ Useful upstream references:
   <https://doc.wikimedia.org/Wikibase/master/php/docs_topics_json.html>
 - Wikibase RDF dump format and truthy direct claims:
   <https://www.mediawiki.org/wiki/Wikibase/Indexing/RDF_Dump_Format>
+- Hugging Face Wikipedia dataset:
+  <https://huggingface.co/datasets/wikimedia/wikipedia>
 
 ## Setup
 
@@ -55,6 +57,12 @@ want sentence-transformers:
 
 ```bash
 uv sync --extra embeddings
+```
+
+Install the Hugging Face streaming dataset path together with embeddings:
+
+```bash
+uv sync --extra embeddings --extra wikipedia
 ```
 
 ## Build The Sample DB
@@ -92,6 +100,48 @@ uv run python download_search_data.py \
 The parser accepts either normalized records shaped like
 `data/sample_wikidata.jsonl` or Wikidata entity JSON records. Full Wikidata dump
 files are very large, so start with a small slice before running a full build.
+
+## Build From Hugging Face Wikipedia Streaming
+
+Stream the first 10,000 records from the Hugging Face `wikimedia/wikipedia`
+dataset config `20231101.en`, embed one article chunk per row with
+`intfloat/e5-base-v2`, and store them in TongGraph:
+
+```bash
+SENTENCE_TRANSFORMERS_DEVICE=cpu uv run python download_search_data.py \
+  --hf-wikipedia \
+  --hf-config 20231101.en \
+  --hf-max-records 10000 \
+  --embedding-backend sentence-transformers \
+  --embedding-model intfloat/e5-base-v2 \
+  --batch-size 64 \
+  --progress-every 1000 \
+  --hf-article-chunks
+```
+
+The build writes `search_data/hf_wikipedia_state.json` after each committed
+batch. Continue with the next streaming rows later by appending to the same DB:
+
+```bash
+SENTENCE_TRANSFORMERS_DEVICE=cpu uv run python download_search_data.py \
+  --hf-wikipedia \
+  --append \
+  --hf-max-records 10000 \
+  --embedding-backend sentence-transformers \
+  --embedding-model intfloat/e5-base-v2 \
+  --batch-size 64 \
+  --progress-every 1000 \
+  --hf-article-chunks
+```
+
+Query the DB directly without starting the server:
+
+```bash
+SENTENCE_TRANSFORMERS_DEVICE=cpu uv run python query_wiki.py "early programming languages and compilers" \
+  --embedding-backend sentence-transformers \
+  --embedding-model intfloat/e5-base-v2 \
+  --top-k 3
+```
 
 ## Serve Retrieval
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import os
 import re
 from dataclasses import dataclass
 from typing import Protocol
@@ -75,8 +76,18 @@ class SentenceTransformerProvider:
 
         self.model_name = model_name
         self.model_version = model_name
-        self._model = SentenceTransformer(model_name)
-        self.dimensions = int(self._model.get_sentence_embedding_dimension())
+        device = os.environ.get("SENTENCE_TRANSFORMERS_DEVICE")
+        self._model = (
+            SentenceTransformer(model_name, device=device)
+            if device
+            else SentenceTransformer(model_name)
+        )
+        get_dimension = getattr(
+            self._model,
+            "get_embedding_dimension",
+            self._model.get_sentence_embedding_dimension,
+        )
+        self.dimensions = int(get_dimension())
 
     def embed_texts(self, texts: list[str], *, role: str) -> list[list[float]]:
         prefix = "query: " if role == "query" else "passage: "

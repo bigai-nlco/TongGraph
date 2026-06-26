@@ -32,6 +32,17 @@ Documentation = "https://bigai-nlco.github.io/TongGraph/"
 Repository = "https://github.com/bigai-nlco/TongGraph"
 Issues = "https://github.com/bigai-nlco/TongGraph/issues"
 
+[project.optional-dependencies]
+server = [
+    "fastapi>=0.115",
+    "pydantic>=2",
+    "PyYAML>=6",
+    "uvicorn[standard]>=0.30",
+]
+
+[project.scripts]
+tonggraph-server = "tonggraph.server.cli:main"
+
 [tool.maturin]
 features = ["extension-module"]
 module-name = "tonggraph._tonggraph"
@@ -39,6 +50,7 @@ python-source = "python"
 
 [dependency-groups]
 dev = [
+    "httpx>=0.28",
     "mkdocs>=1.6.1",
     "mkdocs-material>=9.6.0",
     "mkdocstrings[python]>=0.30.0",

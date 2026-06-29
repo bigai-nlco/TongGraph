@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import queue
 import secrets
+import shutil
+import tarfile
+import tempfile
 import threading
 import time
 import uuid
@@ -254,6 +258,151 @@ class GraphRegistry:
             self.dynamic_users.pop(user_id, None)
             self._save_state()
 
+
+    def backup_graph(self, name: str, *, note: str | None = None) -> dict[str, Any]:
+        name = validate_graph_name(name)
+        entry = self.get_entry(name)
+
+        def prepare(context: GraphWorkerContext) -> dict[str, int]:
+            _prune_snapshots(context)
+            context.graph.compact()
+            return {"node_count": context.graph.node_count(), "edge_count": context.graph.edge_count()}
+
+        counts = self.call_context(name, prepare)
+        self._close_graph_worker(name)
+
+        backup_id = uuid.uuid4().hex
+        created_at = time.time()
+        backups_dir = self._backups_dir()
+        backups_dir.mkdir(parents=True, exist_ok=True)
+        archive_path = self._backup_archive_path(backup_id)
+        metadata_path = self._backup_metadata_path(backup_id)
+        tmp_archive = archive_path.with_name(f"{archive_path.name}.tmp")
+        source_path = entry.path
+        if not source_path.exists():
+            raise ServerError("graph_not_found", f"graph file for {name!r} not found", status_code=404, graph=name)
+        metadata = {
+            "format": "tonggraph-server-backup-v1",
+            "backup_id": backup_id,
+            "graph": name,
+            "created_at": created_at,
+            "relative_graph_path": _relative_path(source_path, self.config.data_dir),
+            "node_count": counts["node_count"],
+            "edge_count": counts["edge_count"],
+            "note": note,
+        }
+        with tarfile.open(tmp_archive, "w:gz") as archive:
+            payload = json.dumps(metadata, indent=2, sort_keys=True).encode("utf-8")
+            info = tarfile.TarInfo("metadata.json")
+            info.size = len(payload)
+            info.mtime = int(created_at)
+            archive.addfile(info, io.BytesIO(payload))
+            archive.add(source_path, arcname="graph.db")
+            for suffix in ("-wal", "-shm"):
+                side_file = Path(f"{source_path}{suffix}")
+                if side_file.exists():
+                    archive.add(side_file, arcname=f"graph.db{suffix}")
+            sidecar = Path(f"{source_path}.segments")
+            if sidecar.exists():
+                for item in sorted(sidecar.rglob("*")):
+                    if item.is_file():
+                        archive.add(item, arcname=f"graph.db.segments/{item.relative_to(sidecar)}")
+        os.replace(tmp_archive, archive_path)
+        public = {
+            **metadata,
+            "filename": archive_path.name,
+            "path": str(archive_path),
+            "size_bytes": archive_path.stat().st_size,
+        }
+        tmp_metadata = metadata_path.with_suffix(".json.tmp")
+        with tmp_metadata.open("w", encoding="utf-8") as handle:
+            json.dump(public, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+        os.replace(tmp_metadata, metadata_path)
+        return public
+
+    def list_backups(self) -> list[dict[str, Any]]:
+        backups_dir = self._backups_dir()
+        if not backups_dir.exists():
+            return []
+        backups: list[dict[str, Any]] = []
+        for metadata_path in sorted(backups_dir.glob("*.json")):
+            try:
+                with metadata_path.open("r", encoding="utf-8") as handle:
+                    metadata = json.load(handle)
+                archive_path = self._backup_archive_path(str(metadata.get("backup_id", metadata_path.stem)))
+                if archive_path.exists():
+                    metadata["size_bytes"] = archive_path.stat().st_size
+                backups.append(metadata)
+            except Exception:
+                continue
+        return backups
+
+    def delete_backup(self, backup_id: str) -> None:
+        backup_id = validate_backup_id(backup_id)
+        archive_path = self._backup_archive_path(backup_id)
+        metadata_path = self._backup_metadata_path(backup_id)
+        if not archive_path.exists() and not metadata_path.exists():
+            raise ServerError("backup_not_found", f"backup {backup_id!r} not found", status_code=404)
+        if archive_path.exists():
+            archive_path.unlink()
+        if metadata_path.exists():
+            metadata_path.unlink()
+
+    def restore_backup(
+        self,
+        backup_id: str,
+        *,
+        graph: str,
+        overwrite: bool = False,
+        grants: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        backup_id = validate_backup_id(backup_id)
+        graph = validate_graph_name(graph)
+        archive_path = self._backup_archive_path(backup_id)
+        if not archive_path.exists():
+            raise ServerError("backup_not_found", f"backup {backup_id!r} not found", status_code=404)
+        with self._lock:
+            existing = self.graphs.get(graph)
+            if existing is not None and not overwrite:
+                raise ServerError("conflict", f"graph {graph!r} already exists", status_code=409, graph=graph)
+            target_path = existing.path if existing is not None else default_graph_path(self.config.data_dir, graph)
+        if existing is not None:
+            self._close_graph_worker(graph)
+
+        with tempfile.TemporaryDirectory(prefix="restore-", dir=self._backups_dir()) as temp_dir:
+            temp_path = Path(temp_dir)
+            metadata = self._extract_backup_archive(archive_path, temp_path)
+            restored_db = temp_path / "graph.db"
+            if not restored_db.exists():
+                raise ServerError("invalid_request", "backup archive does not contain graph.db")
+            self._replace_graph_files(target_path, temp_path)
+
+        with self._lock:
+            entry = self.graphs.get(graph)
+            if entry is None:
+                entry = GraphEntry(name=graph, path=target_path, created_by=None)
+                self.graphs[graph] = entry
+            else:
+                entry.path = target_path
+            if grants:
+                for user_id, access in grants.items():
+                    if access not in {"read", "write"}:
+                        raise ServerError("invalid_request", "grant access must be 'read' or 'write'")
+                    self.grants.setdefault(str(user_id), {})[graph] = access
+            self._save_state()
+        opened = self.open_graph(graph)
+        counts = self.call(graph, lambda graph_obj: {"node_count": graph_obj.node_count(), "edge_count": graph_obj.edge_count()})
+        return {
+            "backup_id": backup_id,
+            "graph": graph,
+            "source_graph": metadata.get("graph"),
+            "path": str(opened.path),
+            "open": opened.worker is not None,
+            "overwritten": existing is not None,
+            **counts,
+        }
+
     def list_graphs(self) -> list[dict[str, Any]]:
         with self._lock:
             return [
@@ -447,6 +596,76 @@ class GraphRegistry:
         self.call(name, lambda graph: graph.refresh())
 
 
+
+    def _close_graph_worker(self, name: str) -> None:
+        worker: GraphWorker | None = None
+        with self._lock:
+            entry = self.graphs.get(name)
+            if entry is not None:
+                worker = entry.worker
+                entry.worker = None
+        if worker is not None:
+            worker.close()
+
+    def _backups_dir(self) -> Path:
+        path = self.config.data_dir / "backups"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def _backup_archive_path(self, backup_id: str) -> Path:
+        backup_id = validate_backup_id(backup_id)
+        return self._backups_dir() / f"{backup_id}.tar.gz"
+
+    def _backup_metadata_path(self, backup_id: str) -> Path:
+        backup_id = validate_backup_id(backup_id)
+        return self._backups_dir() / f"{backup_id}.json"
+
+    def _extract_backup_archive(self, archive_path: Path, target_dir: Path) -> dict[str, Any]:
+        with tarfile.open(archive_path, "r:gz") as archive:
+            metadata: dict[str, Any] | None = None
+            for member in archive.getmembers():
+                name = member.name
+                if name == "metadata.json":
+                    source = archive.extractfile(member)
+                    if source is None:
+                        raise ServerError("invalid_request", "backup metadata is unreadable")
+                    metadata = json.loads(source.read().decode("utf-8"))
+                    continue
+                if name not in {"graph.db", "graph.db-wal", "graph.db-shm"} and not name.startswith("graph.db.segments/"):
+                    raise ServerError("invalid_request", f"unsafe backup member {name!r}")
+                destination = (target_dir / name).resolve()
+                root = target_dir.resolve()
+                if root != destination and root not in destination.parents:
+                    raise ServerError("invalid_request", f"unsafe backup member {name!r}")
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                if member.isfile():
+                    source = archive.extractfile(member)
+                    if source is None:
+                        raise ServerError("invalid_request", f"backup member {name!r} is unreadable")
+                    with destination.open("wb") as output:
+                        shutil.copyfileobj(source, output)
+            if metadata is None or metadata.get("format") != "tonggraph-server-backup-v1":
+                raise ServerError("invalid_request", "unsupported backup format")
+            return metadata
+
+    def _replace_graph_files(self, target_path: Path, source_dir: Path) -> None:
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        for suffix in ("", "-wal", "-shm"):
+            path = Path(f"{target_path}{suffix}")
+            if path.exists():
+                path.unlink()
+        sidecar = Path(f"{target_path}.segments")
+        if sidecar.exists():
+            shutil.rmtree(sidecar)
+        shutil.copy2(source_dir / "graph.db", target_path)
+        for suffix in ("-wal", "-shm"):
+            source = source_dir / f"graph.db{suffix}"
+            if source.exists():
+                shutil.copy2(source, Path(f"{target_path}{suffix}"))
+        source_sidecar = source_dir / "graph.db.segments"
+        if source_sidecar.exists():
+            shutil.copytree(source_sidecar, sidecar)
+
     def _dynamic_entry_locked(self, user_id: str) -> DynamicUserEntry:
         entry = self.dynamic_users.get(user_id)
         if entry is not None:
@@ -550,6 +769,14 @@ class GraphRegistry:
             json.dump(state, handle, indent=2, sort_keys=True)
             handle.write("\n")
         os.replace(tmp, self.state_path)
+
+
+def validate_backup_id(backup_id: str) -> str:
+    if not backup_id:
+        raise ServerError("invalid_request", "backup_id cannot be empty")
+    if not all(ch.isalnum() or ch in {"_", "-"} for ch in backup_id):
+        raise ServerError("invalid_request", "backup_id may only contain letters, digits, '_' or '-'")
+    return backup_id
 
 
 def validate_user_id(user_id: str) -> str:

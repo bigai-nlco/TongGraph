@@ -381,7 +381,7 @@ GraphWorker
 | Exact vector benchmark | P2D 已完成 | 10k/100k exact scan 基准和规模建议 |
 | 可观测性 | P2B 已完成 | 请求日志、耗时、错误计数、graph metrics |
 | 概率传播和 BP | P2C 已完成 | propagate、local_propagate、belief_propagation |
-| 备份/导出 | P3 | SQLite + sidecar 备份、记录导出 |
+| 备份/导出 | P3A 已完成 | SQLite + sidecar 本地备份/恢复；记录导出待后续 |
 | 高级权限 | P3 | per-graph token、角色或 scope |
 | ANN 向量检索 | P3 | 可选 HNSW/ANN backend |
 
@@ -502,13 +502,25 @@ P2E 已实现。当前实现包括：
 
 P2 当前已基本收口，后续工作进入 P3 或按真实使用反馈补强。
 
+## P3A 完成情况
+
+P3A 已实现。当前实现包括：
+
+- 管理员 graph backup API，把 SQLite 主文件、可选 WAL/SHM、`.segments/` sidecar 和 `metadata.json` 写入 `<data_dir>/backups/{backup_id}.tar.gz`。
+- 管理员 backup list/delete API。
+- 管理员 restore API，支持恢复为新 graph，或 `overwrite=true` 覆盖现有 graph。
+- restore 后可附加 graph grants，并把动态 graph 写入 `server-state.json`。
+- 备份前会在 graph worker 内执行 `compact()`，随后短暂关闭该 graph worker，以获得一致的文件级备份。
+- Snapshot 是内存 TTL 资源，不进入备份；restore 后没有旧 snapshot。
+- Python HTTP client wrappers 覆盖 backup/list/restore/delete backup。
+- P3A server/client 集成测试覆盖归档内容、恢复读取、覆盖、授权、删除和重启恢复。
+
 ## P3：规模化和强化
 
 这些能力应该等真实使用反馈明确后再做。
 
 候选方向：
 
-- SQLite 数据库和 `.segments/` sidecar 的备份/恢复工具。
 - 图数据导入导出格式。
 - 只读副本或只读 graph mode。
 - per-graph token 或 role-based access control。

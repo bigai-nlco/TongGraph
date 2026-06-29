@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 
 from ..access import require_admin
-from ..schemas import CreateGraphRequest, GrantRequest, UserCreateRequest, UserTokenRotateRequest, UserUpdateRequest
+from ..schemas import BackupGraphRequest, CreateGraphRequest, GrantRequest, RestoreBackupRequest, UserCreateRequest, UserTokenRotateRequest, UserUpdateRequest
 
 router = APIRouter(prefix="/admin")
 
@@ -85,3 +85,34 @@ async def delete_user(request: Request, user_id: str) -> dict[str, object]:
     require_admin(request)
     request.app.state.registry.delete_user(user_id)
     return {"user": user_id, "deleted": True}
+
+
+@router.post("/graphs/{graph}/backup")
+async def backup_graph(request: Request, graph: str, payload: BackupGraphRequest) -> dict[str, object]:
+    require_admin(request)
+    return {"backup": request.app.state.registry.backup_graph(graph, note=payload.note)}
+
+
+@router.get("/backups")
+async def list_backups(request: Request) -> dict[str, object]:
+    require_admin(request)
+    return {"backups": request.app.state.registry.list_backups()}
+
+
+@router.delete("/backups/{backup_id}")
+async def delete_backup(request: Request, backup_id: str) -> dict[str, object]:
+    require_admin(request)
+    request.app.state.registry.delete_backup(backup_id)
+    return {"backup_id": backup_id, "deleted": True}
+
+
+@router.post("/backups/{backup_id}/restore")
+async def restore_backup(request: Request, backup_id: str, payload: RestoreBackupRequest) -> dict[str, object]:
+    require_admin(request)
+    restored = request.app.state.registry.restore_backup(
+        backup_id,
+        graph=payload.graph,
+        overwrite=payload.overwrite,
+        grants=payload.grants,
+    )
+    return {"graph": restored}

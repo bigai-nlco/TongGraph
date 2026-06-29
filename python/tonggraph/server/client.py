@@ -84,6 +84,28 @@ class TongGraphClient:
     def revoke_graph(self, graph: str, user: str) -> dict[str, Any]:
         return self._request("DELETE", f"/admin/graphs/{_quote(graph)}/grants/{_quote(user)}")
 
+    def backup_graph(self, graph: str, note: str | None = None) -> dict[str, Any]:
+        return self._request("POST", f"/admin/graphs/{_quote(graph)}/backup", {"note": note})["backup"]
+
+    def backups(self) -> list[dict[str, Any]]:
+        return self._request("GET", "/admin/backups")["backups"]
+
+    def delete_backup(self, backup_id: str) -> dict[str, Any]:
+        return self._request("DELETE", f"/admin/backups/{_quote(backup_id)}")
+
+    def restore_backup(
+        self,
+        backup_id: str,
+        graph: str,
+        overwrite: bool = False,
+        grants: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            f"/admin/backups/{_quote(backup_id)}/restore",
+            {"graph": graph, "overwrite": overwrite, "grants": grants or {}},
+        )["graph"]
+
     def admin_users(self) -> list[dict[str, Any]]:
         return self._request("GET", "/admin/users")["users"]
 

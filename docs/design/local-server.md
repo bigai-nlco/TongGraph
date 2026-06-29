@@ -14,8 +14,9 @@ the Python package directly.
     core storage/retrieval/query
     endpoints, traversal and runtime algorithms, batch compute, TTL-bound
     read-only snapshots, inference endpoints for probability transfer and
-    belief propagation, a synchronous Python HTTP client, and basic operations
-    support for request logging, JSON metrics, and request timeout handling.
+    belief propagation, local graph backup/restore, a synchronous Python HTTP
+    client, and basic operations support for request logging, JSON metrics, and
+    request timeout handling.
 
 ## Goal
 
@@ -60,8 +61,8 @@ In scope:
   permissions.
 - Administrator APIs for graph creation and graph permission management.
 - JSON request and response bodies for client compatibility.
-- Operational endpoints for health checks, graph lifecycle, compaction, and
-  refresh.
+- Operational endpoints for health checks, graph lifecycle, compaction, refresh,
+  and local backup/restore.
 
 Out of scope for the first server:
 
@@ -164,7 +165,7 @@ Expected API groups:
 | Compute | traversal, algorithms, subgraph extraction, and batch compute |
 | Snapshots | TTL-bound read-only snapshots for stable reads, query, Cypher, and compute |
 | Inference | probability transfer, variables, factors, evidence, active subgraph compilation, and belief propagation |
-| Operations | request logging, JSON metrics, elapsed-time headers, local authentication |
+| Operations | request logging, JSON metrics, elapsed-time headers, local authentication, backup, and restore |
 
 ## Concurrency Model
 
@@ -217,10 +218,12 @@ default:
 Operations support is intentionally local-first: `/metrics` returns JSON for
 internal dashboards or health probes, request logs use Python logging, and
 request timeout handling returns stable JSON errors without attempting to kill
-native graph work already running in a worker thread. Vector search is currently
-exact scan; local benchmark guidance in the examples recommends 10k vectors per
-index for comfortable interactive use and treats 100k vectors as higher-latency,
-low-QPS or batch-oriented territory.
+native graph work already running in a worker thread. Backup/restore is local
+filesystem only: archives live under `data_dir/backups`, include the SQLite
+files and `.segments/` sidecar, and do not include in-memory snapshots. Vector
+search is currently exact scan; local benchmark guidance in the examples
+recommends 10k vectors per index for comfortable interactive use and treats
+100k vectors as higher-latency, low-QPS or batch-oriented territory.
 
 ## Development Plan
 

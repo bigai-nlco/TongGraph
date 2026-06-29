@@ -32,6 +32,8 @@
   100k local scale guidance.
 - Adds TongGraph Server auth management endpoints and Python client wrappers for
   dynamic users, disabled users, and token rotation.
+- Adds TongGraph Server local graph backup and restore APIs with `.tar.gz`
+  archives for SQLite files and segment sidecars.
 
 ### Changed
 

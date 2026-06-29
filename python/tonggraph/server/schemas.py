@@ -17,6 +17,16 @@ class CreateGraphRequest(BaseModel):
     grants: dict[str, str] = Field(default_factory=dict)
 
 
+class BackupGraphRequest(BaseModel):
+    note: str | None = None
+
+
+class RestoreBackupRequest(BaseModel):
+    graph: str
+    overwrite: bool = False
+    grants: dict[str, str] = Field(default_factory=dict)
+
+
 class UserCreateRequest(BaseModel):
     user_id: str
     token: str | None = None

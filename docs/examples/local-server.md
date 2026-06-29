@@ -224,6 +224,41 @@ rotated = admin.rotate_user_token("bob")
 admin.update_user("bob", disabled=True)
 ```
 
+## Backup And Restore
+
+Administrators can create local `.tar.gz` graph backups and restore them as new
+or existing graphs:
+
+```bash
+curl -X POST http://127.0.0.1:8719/admin/graphs/alice_memory/backup \
+  -H 'Authorization: Bearer admin-dev-token' \
+  -H 'Content-Type: application/json' \
+  -d '{"note":"before migration"}'
+
+curl http://127.0.0.1:8719/admin/backups \
+  -H 'Authorization: Bearer admin-dev-token'
+
+curl -X POST http://127.0.0.1:8719/admin/backups/$BACKUP_ID/restore \
+  -H 'Authorization: Bearer admin-dev-token' \
+  -H 'Content-Type: application/json' \
+  -d '{"graph":"alice_memory_copy","grants":{"alice":"write"}}'
+```
+
+Backups are stored under `<data_dir>/backups/` and include the graph SQLite file,
+optional WAL/SHM files, `.segments/` sidecar files, and graph metadata. In-memory
+snapshots are not backed up.
+
+```python
+admin = TongGraphClient("http://127.0.0.1:8719", token="admin-dev-token")
+backup = admin.backup_graph("alice_memory", note="before migration")
+restored = admin.restore_backup(
+    backup["backup_id"],
+    "alice_memory_copy",
+    grants={"alice": "write"},
+)
+admin.delete_backup(backup["backup_id"])
+```
+
 ## Operations
 
 ```bash

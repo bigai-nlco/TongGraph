@@ -352,15 +352,12 @@ scripts/server/smoke.sh
 ```
 
 Use the template config and environment file as a starting point. The template
-binds to `127.0.0.1:8719` and reads tokens from environment variables.
+binds to `127.0.0.1:8719` and reads tokens from environment variables. The
+start script automatically loads `deploy/tonggraph-server.env` when it exists.
 
 ```bash
-cp deploy/tonggraph-server.env.example /tmp/tonggraph-server.env
-# Edit /tmp/tonggraph-server.env and set private token values.
-set -a
-. /tmp/tonggraph-server.env
-set +a
-
+cp deploy/tonggraph-server.env.example deploy/tonggraph-server.env
+# Edit deploy/tonggraph-server.env and set private token values.
 ./scripts/server/start.sh
 ```
 

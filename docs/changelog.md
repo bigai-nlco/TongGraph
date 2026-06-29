@@ -48,6 +48,8 @@
 - Expands embedded Cypher reads with comma-separated multi-pattern `MATCH`.
 - Rebuilds the local PyO3 extension automatically before pytest when source
   files are newer than the checked-in development extension artifact.
+- Updates bare-metal server scripts to auto-load `deploy/tonggraph-server.env`
+  when present, so start, health, and smoke checks work without manual sourcing.
 
 ## 0.1.0
 

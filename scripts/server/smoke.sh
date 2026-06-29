@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+ENV_FILE="${TONGGRAPH_ENV_FILE:-$ROOT_DIR/deploy/tonggraph-server.env}"
+
+if [ -f "$ENV_FILE" ]; then
+  set -a
+  . "$ENV_FILE"
+  set +a
+fi
+
 BASE_URL="${TONGGRAPH_BASE_URL:-http://127.0.0.1:8719}"
 ADMIN_TOKEN="${TONGGRAPH_ADMIN_TOKEN:?set TONGGRAPH_ADMIN_TOKEN before running smoke test}"
 GRAPH="${TONGGRAPH_SMOKE_GRAPH:-smoke_test}"

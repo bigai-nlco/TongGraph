@@ -158,7 +158,7 @@ Expected API groups:
 | Records | node and edge create/read/update/delete |
 | Retrieval | counts, ID scans, label/type/property lookups |
 | Full-text search | index lifecycle and `search_text()` |
-| Vector search | index lifecycle, vector writes, `search_vector()`, and `search_vectors()` |
+| Vector search | exact-scan index lifecycle, vector writes, `search_vector()`, `search_vectors()`, and benchmarked scale guidance |
 | Query | structured query DSL and selected Cypher endpoints |
 | Compute | traversal, algorithms, subgraph extraction, and batch compute |
 | Snapshots | TTL-bound read-only snapshots for stable reads, query, Cypher, and compute |
@@ -216,7 +216,10 @@ default:
 Operations support is intentionally local-first: `/metrics` returns JSON for
 internal dashboards or health probes, request logs use Python logging, and
 request timeout handling returns stable JSON errors without attempting to kill
-native graph work already running in a worker thread.
+native graph work already running in a worker thread. Vector search is currently
+exact scan; local benchmark guidance in the examples recommends 10k vectors per
+index for comfortable interactive use and treats 100k vectors as higher-latency,
+low-QPS or batch-oriented territory.
 
 ## Development Plan
 

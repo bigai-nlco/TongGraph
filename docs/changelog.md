@@ -28,6 +28,8 @@
 - Adds TongGraph Server inference endpoints and Python client wrappers for
   probability transfer, variables, factors, evidence, traces, active subgraphs,
   and belief propagation.
+- Adds an exact vector search benchmark for embedded and server APIs with 10k and
+  100k local scale guidance.
 
 ### Changed
 

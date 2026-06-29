@@ -201,6 +201,23 @@ curl -H 'Authorization: Bearer admin-dev-token' \
 counts, uptime, and graph summaries. In token auth mode it requires an admin
 token.
 
+## Vector Benchmark
+
+Run the local exact vector benchmark when sizing server deployments:
+
+```bash
+uv run python -m tests.benchmark.gbench.vector \
+  --vectors 10000 \
+  --dimensions 128 \
+  --queries 20 \
+  --batch-size 8 \
+  --repeat 3 \
+  --output tests/benchmark/.gbench/results/vector-exact-10k.json
+```
+
+The benchmark reports embedded and HTTP server exact-search latency in JSON.
+Generated results live under `tests/benchmark/.gbench/`, which is gitignored.
+
 ## Current Boundaries
 
 The current server is single-node and internal-network oriented. Snapshot

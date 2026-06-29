@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 
 from ..access import current_user, require_graph_access
+from ..logical import resolve_scope
 from ..schemas import ComputeBatchRequest, CypherRequest, QueryRequest, SnapshotCreateRequest, TextSearchRequest, VectorBatchSearchRequest, VectorSearchRequest
 from ..serialization import serialize
 
@@ -17,7 +18,10 @@ def _user_for_snapshot(request: Request, graph: str):  # type: ignore[no-untyped
 @router.post("")
 async def create_snapshot(request: Request, graph: str, payload: SnapshotCreateRequest = SnapshotCreateRequest()) -> dict[str, object]:
     user = _user_for_snapshot(request, graph)
-    snapshot = request.app.state.registry.create_snapshot(graph, user.user_id, ttl_seconds=payload.ttl_seconds)
+    scope = resolve_scope(request, graph, payload.logical_graph_id)
+    snapshot = request.app.state.registry.create_snapshot(
+        graph, user.user_id, ttl_seconds=payload.ttl_seconds, logical_graph_id=scope
+    )
     return {"snapshot": snapshot}
 
 

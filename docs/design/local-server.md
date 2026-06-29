@@ -12,7 +12,8 @@ the Python package directly.
     authentication, graph-level access control, administrator graph creation,
     auth management with token rotation, persisted server control-plane state,
     core storage/retrieval/query
-    endpoints, bulk record and vector writes, context retrieval, controlled
+    endpoints, logical graph namespaces inside one physical SQLite graph, bulk
+    record and vector writes, context retrieval, controlled
     import/export, traversal and runtime algorithms, batch compute, TTL-bound
     read-only snapshots with retrieval endpoints, inference endpoints for probability transfer and
     belief propagation, local graph backup/restore, bare-metal deployment
@@ -158,6 +159,7 @@ Expected API groups:
 | Auth and access | user identity, graph permissions, dynamic users, disabled users, and token rotation |
 | Admin | create graph, list graphs, grant graph access |
 | Graph lifecycle | open, close, compact, refresh |
+| Logical graphs | optional logical graph namespaces inside one physical graph/db |
 | Records | node and edge create/read/update/delete plus bulk append |
 | Retrieval | counts, ID scans, external ID lookup, label/type/property lookups, and `retrieve_context()` |
 | Full-text search | index lifecycle and `search_text()` |
@@ -193,6 +195,8 @@ for dynamic graph creation and permission changes:
 - Each user has an allowlist of graphs.
 - Each graph grant is either read-only or read-write.
 - Administrator users can create graphs, manage users, disable users, rotate tokens, and grant or revoke graph access.
+- A graph can optionally enable logical graph namespaces so clients can store many agent graphs in one SQLite db. Non-admin data calls on such graphs must include `logical_graph_id`; access control still inherits the physical graph grant.
+- Each logical-graph-scoped request targets one `logical_graph_id`; callers that need multi-logical-graph retrieval should issue multiple scoped requests and merge results client-side.
 - Unknown users, unknown graphs, and missing permissions fail before the request
   reaches the `Graph` handle.
 

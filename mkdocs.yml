@@ -84,6 +84,7 @@ nav:
       - Belief Propagation: examples/belief-propagation.md
       - Benchmarks: examples/benchmarks.md
       - Local Server: examples/local-server.md
+      - Server Agent Graph Client 中文: examples/server-agent-graph-client.zh.md
 
 plugins:
   - search

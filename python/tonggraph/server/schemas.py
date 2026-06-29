@@ -15,6 +15,11 @@ class GrantRequest(BaseModel):
 class CreateGraphRequest(BaseModel):
     name: str
     grants: dict[str, str] = Field(default_factory=dict)
+    logical_graphs: bool = False
+
+
+class LogicalGraphCreateRequest(BaseModel):
+    logical_graph_id: str
 
 
 class BackupGraphRequest(BaseModel):
@@ -49,10 +54,12 @@ class NodeCreateRequest(BaseModel):
     external_id: str | None = None
     labels: list[str] | None = None
     properties: dict[str, Any] | None = None
+    logical_graph_id: str | None = None
 
 
 class NodeBatchCreateRequest(BaseModel):
     records: list[NodeCreateRequest]
+    logical_graph_id: str | None = None
 
 
 class NodeUpdateRequest(BaseModel):
@@ -61,6 +68,7 @@ class NodeUpdateRequest(BaseModel):
     remove_labels: list[str] | None = None
     set_properties: dict[str, Any] | None = None
     remove_properties: list[str] | None = None
+    logical_graph_id: str | None = None
 
 
 class EdgeCreateRequest(BaseModel):
@@ -68,15 +76,18 @@ class EdgeCreateRequest(BaseModel):
     target: int
     edge_type: str
     properties: dict[str, Any] | None = None
+    logical_graph_id: str | None = None
 
 
 class EdgeBatchCreateRequest(BaseModel):
     records: list[EdgeCreateRequest]
+    logical_graph_id: str | None = None
 
 
 class EdgeUpdateRequest(BaseModel):
     set_properties: dict[str, Any] | None = None
     remove_properties: list[str] | None = None
+    logical_graph_id: str | None = None
 
 
 class FullTextIndexRequest(BaseModel):
@@ -88,6 +99,7 @@ class FullTextIndexRequest(BaseModel):
 
 class TextSearchRequest(BaseModel):
     query: str
+    logical_graph_id: str | None = None
     mode: str = "all"
     labels: list[str] | None = None
     edge_type: str | None = None
@@ -107,18 +119,22 @@ class VectorIndexRequest(BaseModel):
 
 class VectorUpsertRequest(BaseModel):
     vector: list[float]
+    logical_graph_id: str | None = None
 
 
 class VectorBatchUpsertRequest(BaseModel):
     vectors: dict[int, list[float]]
+    logical_graph_id: str | None = None
 
 
 class VectorBatchDeleteRequest(BaseModel):
     entity_ids: list[int]
+    logical_graph_id: str | None = None
 
 
 class VectorSearchRequest(BaseModel):
     query_vector: list[float]
+    logical_graph_id: str | None = None
     labels: list[str] | None = None
     edge_type: str | None = None
     properties: dict[str, Any] | None = None
@@ -129,6 +145,7 @@ class VectorSearchRequest(BaseModel):
 
 class VectorBatchSearchRequest(BaseModel):
     query_vectors: list[list[float]]
+    logical_graph_id: str | None = None
     labels: list[str] | None = None
     edge_type: str | None = None
     properties: dict[str, Any] | None = None
@@ -140,10 +157,12 @@ class VectorBatchSearchRequest(BaseModel):
 class QueryRequest(BaseModel):
     spec: dict[str, Any]
     profile: bool = False
+    logical_graph_id: str | None = None
 
 
 class RetrieveContextRequest(BaseModel):
     text_query: str | None = None
+    logical_graph_id: str | None = None
     text_index: str | None = None
     vector_query: list[float] | None = None
     vector_index: str | None = None
@@ -181,6 +200,7 @@ class CypherRequest(BaseModel):
     query: str
     parameters: dict[str, Any] | None = None
     profile: bool = False
+    logical_graph_id: str | None = None
 
 
 class CypherTransactionRequest(BaseModel):
@@ -189,6 +209,7 @@ class CypherTransactionRequest(BaseModel):
 
 class FrontierRequest(BaseModel):
     starts: list[int]
+    logical_graph_id: str | None = None
     steps: int
     direction: str = "out"
     edge_type: str | None = None
@@ -196,15 +217,18 @@ class FrontierRequest(BaseModel):
 
 class SubgraphRequest(BaseModel):
     nodes: list[int]
+    logical_graph_id: str | None = None
     edge_type: str | None = None
 
 
 class ComputeBatchRequest(BaseModel):
     jobs: list[dict[str, Any]]
+    logical_graph_id: str | None = None
 
 
 class SnapshotCreateRequest(BaseModel):
     ttl_seconds: float = Field(default=600.0, gt=0, le=3600.0)
+    logical_graph_id: str | None = None
 
 
 class PropagateRequest(BaseModel):

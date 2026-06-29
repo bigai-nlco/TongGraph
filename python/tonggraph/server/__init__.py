@@ -9,6 +9,7 @@ __all__ = [
     "TongGraphClient",
     "TongGraphServerError",
     "RemoteGraph",
+    "RemoteLogicalGraph",
     "RemoteSnapshot",
 ]
 
@@ -18,13 +19,14 @@ def __getattr__(name: str) -> Any:
         from .app import create_app
 
         return create_app
-    if name in {"TongGraphClient", "TongGraphServerError", "RemoteGraph", "RemoteSnapshot"}:
-        from .client import RemoteGraph, RemoteSnapshot, TongGraphClient, TongGraphServerError
+    if name in {"TongGraphClient", "TongGraphServerError", "RemoteGraph", "RemoteLogicalGraph", "RemoteSnapshot"}:
+        from .client import RemoteGraph, RemoteLogicalGraph, RemoteSnapshot, TongGraphClient, TongGraphServerError
 
         return {
             "TongGraphClient": TongGraphClient,
             "TongGraphServerError": TongGraphServerError,
             "RemoteGraph": RemoteGraph,
+            "RemoteLogicalGraph": RemoteLogicalGraph,
             "RemoteSnapshot": RemoteSnapshot,
         }[name]
     raise AttributeError(name)

@@ -109,6 +109,80 @@ print(rows, nearest, stable_count)
 The first Python client returns JSON-compatible dict/list values. It does not
 start the server process; point it at an already running `tonggraph-server`.
 
+
+## Logical Graph Namespaces
+
+A physical server graph can be enabled as a logical-graph workspace. This lets
+clients store many agent graphs in one SQLite database without asking an
+administrator to create a new database file for each run.
+
+```yaml
+graphs:
+  agent_workspace:
+    path: agent_workspace.db
+    logical_graphs: true
+```
+
+Administrators can also create one dynamically:
+
+```python
+admin.create_graph("agent_workspace", grants={"alice": "write"}, logical_graphs=True)
+```
+
+A writer can then create logical graphs inside that workspace and use the
+convenience proxy. The proxy automatically sends `logical_graph_id` on scoped
+record, retrieval, query, traversal, compute, and snapshot calls.
+
+```python
+workspace = client.graph("agent_workspace")
+workspace.create_logical_graph("q450")
+graph = workspace.logical("q450")
+
+alice = graph.add_node("agent:q450:alice", labels=["Person"], properties={"name": "Alice"})
+assert graph.node_count() == 1
+```
+
+HTTP clients pass `logical_graph_id` in the body for POST/PATCH APIs and as a
+query parameter for GET/DELETE APIs:
+
+```bash
+curl -X POST http://127.0.0.1:8719/graphs/agent_workspace/nodes/batch \
+  -H 'Authorization: Bearer alice-dev-token' \
+  -H 'Content-Type: application/json' \
+  -d '{"logical_graph_id":"q450","records":[{"external_id":"agent:q450:alice","labels":["Person"],"properties":{"name":"Alice"}}]}'
+
+curl 'http://127.0.0.1:8719/graphs/agent_workspace/nodes/count?logical_graph_id=q450' \
+  -H 'Authorization: Bearer alice-dev-token'
+```
+
+On logical-graph-enabled physical graphs, non-admin data API calls must include
+`logical_graph_id`. Cypher is intentionally unavailable to non-admin users in
+this mode because the server cannot safely inject a namespace filter into
+arbitrary Cypher text.
+
+Each scoped data request targets one logical graph. To search or query several
+logical graphs, loop in the client and merge the results explicitly:
+
+```python
+workspace = client.graph("agent_workspace")
+logical_graph_ids = ["q450", "q451", "q452"]
+
+rows = []
+for logical_graph_id in logical_graph_ids:
+    graph = workspace.logical(logical_graph_id)
+    for row in graph.search_vector("embeddings", query_vector, labels=["Belief"], limit=10):
+        row["logical_graph_id"] = logical_graph_id
+        rows.append(row)
+
+rows.sort(key=lambda row: row.get("score", 0.0), reverse=True)
+top_rows = rows[:10]
+```
+
+The same pattern applies to full-text search, `retrieve_context()`, structured
+`query()`, counts, traversal, algorithms, and snapshots. The server does not run
+cross-logical-graph traversal or ranking in one request; the caller decides how
+to combine, sort, truncate, and deduplicate results from multiple logical graphs.
+
 ## Bulk Ingest And Context Retrieval
 
 Use batch writes for remote ingest, then combine text/vector candidates with graph

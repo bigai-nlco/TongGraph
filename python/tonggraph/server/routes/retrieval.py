@@ -3,6 +3,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 
 from ..access import require_graph_access
+from ..errors import ServerError
+from ..logical import assert_record_in_scope, merge_scope_properties, resolve_scope
 from ..schemas import (
     FullTextIndexRequest,
     RetrieveContextRequest,
@@ -17,6 +19,23 @@ from ..schemas import (
 from ..serialization import serialize
 
 router = APIRouter(prefix="/graphs/{graph}")
+
+
+def _vector_target(graph_obj, index: str) -> str:
+    for item in graph_obj.vector_indexes():
+        if dict(item).get("name") == index:
+            return str(dict(item).get("target", "node"))
+    return "node"
+
+
+def _assert_entity_scope(graph_obj, index: str, entity_id: int, scope: str | None, graph: str) -> None:
+    if scope is None:
+        return
+    target = _vector_target(graph_obj, index)
+    if target == "edge":
+        assert_record_in_scope(graph_obj.get_edge(entity_id), scope, kind="edge", graph=graph)
+    else:
+        assert_record_in_scope(graph_obj.get_node(entity_id), scope, kind="node", graph=graph)
 
 
 @router.get("/fulltext/indexes")
@@ -51,6 +70,7 @@ async def rebuild_fulltext_index(request: Request, graph: str, index: str) -> di
 @router.post("/fulltext/{index}/search")
 async def search_text(request: Request, graph: str, index: str, payload: TextSearchRequest) -> dict[str, object]:
     require_graph_access(request, graph, "read")
+    scope = resolve_scope(request, graph, payload.logical_graph_id)
 
     def op(graph_obj):
         return {
@@ -61,7 +81,7 @@ async def search_text(request: Request, graph: str, index: str, payload: TextSea
                     mode=payload.mode,
                     labels=payload.labels,
                     edge_type=payload.edge_type,
-                    properties=payload.properties,
+                    properties=merge_scope_properties(payload.properties, scope),
                     limit=payload.limit,
                     offset=payload.offset,
                 )
@@ -74,6 +94,7 @@ async def search_text(request: Request, graph: str, index: str, payload: TextSea
 @router.post("/retrieve/context")
 async def retrieve_context(request: Request, graph: str, payload: RetrieveContextRequest) -> dict[str, object]:
     require_graph_access(request, graph, "read")
+    scope = resolve_scope(request, graph, payload.logical_graph_id)
 
     def op(graph_obj):
         return {
@@ -85,7 +106,7 @@ async def retrieve_context(request: Request, graph: str, payload: RetrieveContex
                     vector_index=payload.vector_index,
                     labels=payload.labels,
                     edge_type=payload.edge_type,
-                    properties=payload.properties,
+                    properties=merge_scope_properties(payload.properties, scope),
                     radius=payload.radius,
                     direction=payload.direction,
                     limit=payload.limit,
@@ -125,43 +146,74 @@ async def drop_vector_index(request: Request, graph: str, index: str) -> dict[st
 @router.put("/vector/{index}/batch")
 async def upsert_vectors(request: Request, graph: str, index: str, payload: VectorBatchUpsertRequest) -> dict[str, object]:
     require_graph_access(request, graph, "write")
+    scope = resolve_scope(request, graph, payload.logical_graph_id)
     vectors = {int(entity_id): vector for entity_id, vector in payload.vectors.items()}
-    return request.app.state.registry.call(
-        graph,
-        lambda graph_obj: (graph_obj.upsert_vectors(index, vectors), {"upserted": True, "count": len(vectors)})[1],
-    )
+
+    def op(graph_obj):
+        for entity_id in vectors:
+            _assert_entity_scope(graph_obj, index, entity_id, scope, graph)
+        graph_obj.upsert_vectors(index, vectors)
+        return {"upserted": True, "count": len(vectors)}
+
+    return request.app.state.registry.call(graph, op)
 
 
 @router.put("/vector/{index}/{entity_id}")
 async def upsert_vector(request: Request, graph: str, index: str, entity_id: int, payload: VectorUpsertRequest) -> dict[str, object]:
     require_graph_access(request, graph, "write")
-    return request.app.state.registry.call(graph, lambda graph_obj: (graph_obj.upsert_vector(index, entity_id, payload.vector), {"upserted": True})[1])
+    scope = resolve_scope(request, graph, payload.logical_graph_id)
+
+    def op(graph_obj):
+        _assert_entity_scope(graph_obj, index, entity_id, scope, graph)
+        graph_obj.upsert_vector(index, entity_id, payload.vector)
+        return {"upserted": True}
+
+    return request.app.state.registry.call(graph, op)
 
 
 @router.get("/vector/{index}/{entity_id}")
-async def get_vector(request: Request, graph: str, index: str, entity_id: int) -> dict[str, object]:
+async def get_vector(request: Request, graph: str, index: str, entity_id: int, logical_graph_id: str | None = None) -> dict[str, object]:
     require_graph_access(request, graph, "read")
-    return request.app.state.registry.call(graph, lambda graph_obj: {"vector": graph_obj.get_vector(index, entity_id)})
+    scope = resolve_scope(request, graph, logical_graph_id)
+
+    def op(graph_obj):
+        _assert_entity_scope(graph_obj, index, entity_id, scope, graph)
+        return {"vector": graph_obj.get_vector(index, entity_id)}
+
+    return request.app.state.registry.call(graph, op)
 
 
 @router.delete("/vector/{index}/{entity_id}")
-async def delete_vector(request: Request, graph: str, index: str, entity_id: int) -> dict[str, object]:
+async def delete_vector(request: Request, graph: str, index: str, entity_id: int, logical_graph_id: str | None = None) -> dict[str, object]:
     require_graph_access(request, graph, "write")
-    return request.app.state.registry.call(graph, lambda graph_obj: (graph_obj.delete_vector(index, entity_id), {"deleted": True})[1])
+    scope = resolve_scope(request, graph, logical_graph_id)
+
+    def op(graph_obj):
+        _assert_entity_scope(graph_obj, index, entity_id, scope, graph)
+        graph_obj.delete_vector(index, entity_id)
+        return {"deleted": True}
+
+    return request.app.state.registry.call(graph, op)
 
 
 @router.post("/vector/{index}/delete-batch")
 async def delete_vectors(request: Request, graph: str, index: str, payload: VectorBatchDeleteRequest) -> dict[str, object]:
     require_graph_access(request, graph, "write")
-    return request.app.state.registry.call(
-        graph,
-        lambda graph_obj: (graph_obj.delete_vectors(index, payload.entity_ids), {"deleted": True, "count": len(payload.entity_ids)})[1],
-    )
+    scope = resolve_scope(request, graph, payload.logical_graph_id)
+
+    def op(graph_obj):
+        for entity_id in payload.entity_ids:
+            _assert_entity_scope(graph_obj, index, entity_id, scope, graph)
+        graph_obj.delete_vectors(index, payload.entity_ids)
+        return {"deleted": True, "count": len(payload.entity_ids)}
+
+    return request.app.state.registry.call(graph, op)
 
 
 @router.post("/vector/{index}/search")
 async def search_vector(request: Request, graph: str, index: str, payload: VectorSearchRequest) -> dict[str, object]:
     require_graph_access(request, graph, "read")
+    scope = resolve_scope(request, graph, payload.logical_graph_id)
 
     def op(graph_obj):
         return {
@@ -171,7 +223,7 @@ async def search_vector(request: Request, graph: str, index: str, payload: Vecto
                     payload.query_vector,
                     labels=payload.labels,
                     edge_type=payload.edge_type,
-                    properties=payload.properties,
+                    properties=merge_scope_properties(payload.properties, scope),
                     min_score=payload.min_score,
                     limit=payload.limit,
                     offset=payload.offset,
@@ -185,6 +237,7 @@ async def search_vector(request: Request, graph: str, index: str, payload: Vecto
 @router.post("/vector/{index}/search-batch")
 async def search_vectors(request: Request, graph: str, index: str, payload: VectorBatchSearchRequest) -> dict[str, object]:
     require_graph_access(request, graph, "read")
+    scope = resolve_scope(request, graph, payload.logical_graph_id)
 
     def op(graph_obj):
         return {
@@ -194,7 +247,7 @@ async def search_vectors(request: Request, graph: str, index: str, payload: Vect
                     payload.query_vectors,
                     labels=payload.labels,
                     edge_type=payload.edge_type,
-                    properties=payload.properties,
+                    properties=merge_scope_properties(payload.properties, scope),
                     min_score=payload.min_score,
                     limit=payload.limit,
                     offset=payload.offset,

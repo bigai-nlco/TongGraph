@@ -3,38 +3,46 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 
 from ..access import require_graph_access
+from ..logical import resolve_scope, scoped_graph_view
 from ..schemas import ComputeBatchRequest, FrontierRequest, SubgraphRequest
 from ..serialization import serialize
 
 router = APIRouter(prefix="/graphs/{graph}")
 
 
+def _view(graph_obj, scope):
+    return scoped_graph_view(graph_obj, scope)
+
+
 @router.get("/traversal/neighbors/{node_id}")
-async def neighbors(request: Request, graph: str, node_id: int, direction: str = "out", edge_type: str | None = None) -> dict[str, object]:
+async def neighbors(request: Request, graph: str, node_id: int, direction: str = "out", edge_type: str | None = None, logical_graph_id: str | None = None) -> dict[str, object]:
     require_graph_access(request, graph, "read")
+    scope = resolve_scope(request, graph, logical_graph_id)
     return request.app.state.registry.call(
         graph,
-        lambda graph_obj: {"ids": serialize(graph_obj.neighbors(node_id, direction=direction, edge_type=edge_type))},
+        lambda graph_obj: {"ids": serialize(_view(graph_obj, scope).neighbors(node_id, direction=direction, edge_type=edge_type))},
     )
 
 
 @router.get("/traversal/k-hop")
-async def k_hop(request: Request, graph: str, start: int, hops: int, direction: str = "out", edge_type: str | None = None) -> dict[str, object]:
+async def k_hop(request: Request, graph: str, start: int, hops: int, direction: str = "out", edge_type: str | None = None, logical_graph_id: str | None = None) -> dict[str, object]:
     require_graph_access(request, graph, "read")
+    scope = resolve_scope(request, graph, logical_graph_id)
     return request.app.state.registry.call(
         graph,
-        lambda graph_obj: {"ids": serialize(graph_obj.k_hop(start, hops, direction=direction, edge_type=edge_type))},
+        lambda graph_obj: {"ids": serialize(_view(graph_obj, scope).k_hop(start, hops, direction=direction, edge_type=edge_type))},
     )
 
 
 @router.post("/traversal/frontier")
 async def frontier(request: Request, graph: str, payload: FrontierRequest) -> dict[str, object]:
     require_graph_access(request, graph, "read")
+    scope = resolve_scope(request, graph, payload.logical_graph_id)
     return request.app.state.registry.call(
         graph,
         lambda graph_obj: {
             "ids": serialize(
-                graph_obj.frontier(
+                _view(graph_obj, scope).frontier(
                     payload.starts,
                     payload.steps,
                     direction=payload.direction,
@@ -53,12 +61,14 @@ async def bfs(
     direction: str = "out",
     edge_type: str | None = None,
     max_depth: int | None = None,
+    logical_graph_id: str | None = None,
 ) -> dict[str, object]:
     require_graph_access(request, graph, "read")
+    scope = resolve_scope(request, graph, logical_graph_id)
     return request.app.state.registry.call(
         graph,
         lambda graph_obj: {
-            "ids": serialize(graph_obj.bfs(start, direction=direction, edge_type=edge_type, max_depth=max_depth))
+            "ids": serialize(_view(graph_obj, scope).bfs(start, direction=direction, edge_type=edge_type, max_depth=max_depth))
         },
     )
 
@@ -72,13 +82,15 @@ async def shortest_path(
     direction: str = "out",
     edge_type: str | None = None,
     weight_property: str | None = None,
+    logical_graph_id: str | None = None,
 ) -> dict[str, object]:
     require_graph_access(request, graph, "read")
+    scope = resolve_scope(request, graph, logical_graph_id)
     return request.app.state.registry.call(
         graph,
         lambda graph_obj: {
             "path": serialize(
-                graph_obj.shortest_path(
+                _view(graph_obj, scope).shortest_path(
                     start,
                     target,
                     direction=direction,
@@ -91,11 +103,12 @@ async def shortest_path(
 
 
 @router.get("/algorithms/connected-components")
-async def connected_components(request: Request, graph: str, edge_type: str | None = None) -> dict[str, object]:
+async def connected_components(request: Request, graph: str, edge_type: str | None = None, logical_graph_id: str | None = None) -> dict[str, object]:
     require_graph_access(request, graph, "read")
+    scope = resolve_scope(request, graph, logical_graph_id)
     return request.app.state.registry.call(
         graph,
-        lambda graph_obj: {"components": serialize(graph_obj.connected_components(edge_type=edge_type))},
+        lambda graph_obj: {"components": serialize(_view(graph_obj, scope).connected_components(edge_type=edge_type))},
     )
 
 
@@ -107,13 +120,15 @@ async def pagerank(
     damping: float = 0.85,
     tolerance: float | None = None,
     edge_type: str | None = None,
+    logical_graph_id: str | None = None,
 ) -> dict[str, object]:
     require_graph_access(request, graph, "read")
+    scope = resolve_scope(request, graph, logical_graph_id)
     return request.app.state.registry.call(
         graph,
         lambda graph_obj: {
             "scores": serialize(
-                graph_obj.pagerank(
+                _view(graph_obj, scope).pagerank(
                     iterations=iterations,
                     damping=damping,
                     tolerance=tolerance,
@@ -133,13 +148,15 @@ async def random_walk(
     direction: str = "out",
     edge_type: str | None = None,
     seed: int | None = None,
+    logical_graph_id: str | None = None,
 ) -> dict[str, object]:
     require_graph_access(request, graph, "read")
+    scope = resolve_scope(request, graph, logical_graph_id)
     return request.app.state.registry.call(
         graph,
         lambda graph_obj: {
             "ids": serialize(
-                graph_obj.random_walk(start, steps, direction=direction, edge_type=edge_type, seed=seed)
+                _view(graph_obj, scope).random_walk(start, steps, direction=direction, edge_type=edge_type, seed=seed)
             )
         },
     )
@@ -148,16 +165,18 @@ async def random_walk(
 @router.post("/subgraph")
 async def subgraph(request: Request, graph: str, payload: SubgraphRequest) -> dict[str, object]:
     require_graph_access(request, graph, "read")
+    scope = resolve_scope(request, graph, payload.logical_graph_id)
     return request.app.state.registry.call(
         graph,
-        lambda graph_obj: {"snapshot": serialize(graph_obj.subgraph(payload.nodes, edge_type=payload.edge_type))},
+        lambda graph_obj: {"snapshot": serialize(_view(graph_obj, scope).subgraph(payload.nodes, edge_type=payload.edge_type))},
     )
 
 
 @router.post("/compute/batch")
 async def compute_batch(request: Request, graph: str, payload: ComputeBatchRequest) -> dict[str, object]:
     require_graph_access(request, graph, "read")
+    scope = resolve_scope(request, graph, payload.logical_graph_id)
     return request.app.state.registry.call(
         graph,
-        lambda graph_obj: {"results": serialize(graph_obj.compute_batch(payload.jobs))},
+        lambda graph_obj: {"results": serialize(_view(graph_obj, scope).compute_batch(payload.jobs))},
     )

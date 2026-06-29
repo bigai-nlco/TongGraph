@@ -17,8 +17,21 @@ async def admin_graphs(request: Request) -> dict[str, object]:
 @router.post("/graphs")
 async def create_graph(request: Request, payload: CreateGraphRequest) -> dict[str, object]:
     user = require_admin(request)
-    entry = request.app.state.registry.create_graph(payload.name, created_by=user.user_id, grants=payload.grants)
-    return {"graph": {"name": entry.name, "path": str(entry.path), "open": entry.worker is not None, "created_by": entry.created_by}}
+    entry = request.app.state.registry.create_graph(
+        payload.name,
+        created_by=user.user_id,
+        grants=payload.grants,
+        logical_graphs=payload.logical_graphs,
+    )
+    return {
+        "graph": {
+            "name": entry.name,
+            "path": str(entry.path),
+            "open": entry.worker is not None,
+            "created_by": entry.created_by,
+            "logical_graphs": entry.logical_graphs,
+        }
+    }
 
 
 @router.post("/graphs/{graph}/grants")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 import urllib.error
 import urllib.parse
@@ -71,8 +72,10 @@ class TongGraphClient:
     def admin_graphs(self) -> list[dict[str, Any]]:
         return self._request("GET", "/admin/graphs")["graphs"]
 
-    def create_graph(self, name: str, grants: dict[str, str] | None = None) -> dict[str, Any]:
-        return self._request("POST", "/admin/graphs", {"name": name, "grants": grants or {}})["graph"]
+    def create_graph(self, name: str, grants: dict[str, str] | None = None, logical_graphs: bool = False) -> dict[str, Any]:
+        return self._request(
+            "POST", "/admin/graphs", {"name": name, "grants": grants or {}, "logical_graphs": logical_graphs}
+        )["graph"]
 
     def grant_graph(self, graph: str, user: str, access: str) -> dict[str, Any]:
         return self._request(
@@ -195,11 +198,30 @@ class RemoteGraph:
         self.name = name
         self.path = f"/graphs/{_quote(name)}"
 
+    def logical(self, logical_graph_id: str) -> RemoteLogicalGraph:
+        return RemoteLogicalGraph(self, logical_graph_id)
+
+    def logical_graphs(self) -> list[dict[str, Any]]:
+        return self.client._request("GET", f"{self.path}/logical-graphs")["logical_graphs"]
+
+    def create_logical_graph(self, logical_graph_id: str) -> dict[str, Any]:
+        return self.client._request(
+            "POST", f"{self.path}/logical-graphs", {"logical_graph_id": logical_graph_id}
+        )["logical_graph"]
+
+    def get_logical_graph(self, logical_graph_id: str) -> dict[str, Any]:
+        return self.client._request("GET", f"{self.path}/logical-graphs/{_quote(logical_graph_id)}")["logical_graph"]
+
+    def delete_logical_graph(self, logical_graph_id: str) -> dict[str, Any]:
+        return self.client._request("DELETE", f"{self.path}/logical-graphs/{_quote(logical_graph_id)}")
+
     def snapshot(self, snapshot_id: str, metadata: dict[str, Any] | None = None) -> RemoteSnapshot:
         return RemoteSnapshot(self, snapshot_id, metadata=metadata)
 
-    def create_snapshot(self, ttl_seconds: float = 600.0) -> RemoteSnapshot:
-        metadata = self.client._request("POST", f"{self.path}/snapshots", {"ttl_seconds": ttl_seconds})["snapshot"]
+    def create_snapshot(self, ttl_seconds: float = 600.0, logical_graph_id: str | None = None) -> RemoteSnapshot:
+        metadata = self.client._request(
+            "POST", f"{self.path}/snapshots", {"ttl_seconds": ttl_seconds, "logical_graph_id": logical_graph_id}
+        )["snapshot"]
         return RemoteSnapshot(self, metadata["snapshot_id"], metadata=metadata)
 
     def snapshots(self) -> list[dict[str, Any]]:
@@ -225,53 +247,68 @@ class RemoteGraph:
     def schema(self) -> dict[str, Any]:
         return self.client._request("GET", f"{self.path}/schema")["schema"]
 
-    def node_count(self) -> int:
-        return int(self.client._request("GET", f"{self.path}/nodes/count")["count"])
+    def node_count(self, logical_graph_id: str | None = None) -> int:
+        return int(self.client._request("GET", f"{self.path}/nodes/count", query={"logical_graph_id": logical_graph_id})["count"])
 
-    def edge_count(self) -> int:
-        return int(self.client._request("GET", f"{self.path}/edges/count")["count"])
+    def edge_count(self, logical_graph_id: str | None = None) -> int:
+        return int(self.client._request("GET", f"{self.path}/edges/count", query={"logical_graph_id": logical_graph_id})["count"])
 
-    def node_ids(self) -> list[int]:
-        return self.client._request("GET", f"{self.path}/nodes")["ids"]
+    def node_ids(self, logical_graph_id: str | None = None) -> list[int]:
+        return self.client._request("GET", f"{self.path}/nodes", query={"logical_graph_id": logical_graph_id})["ids"]
 
-    def edge_ids(self) -> list[int]:
-        return self.client._request("GET", f"{self.path}/edges")["ids"]
+    def edge_ids(self, logical_graph_id: str | None = None) -> list[int]:
+        return self.client._request("GET", f"{self.path}/edges", query={"logical_graph_id": logical_graph_id})["ids"]
 
-    def nodes_with_label(self, label: str) -> list[int]:
-        return self.client._request("GET", f"{self.path}/nodes/by-label/{_quote(label)}")["ids"]
+    def nodes_with_label(self, label: str, logical_graph_id: str | None = None) -> list[int]:
+        return self.client._request(
+            "GET", f"{self.path}/nodes/by-label/{_quote(label)}", query={"logical_graph_id": logical_graph_id}
+        )["ids"]
 
-    def nodes_with_property(self, key: str, value: Any | None = None) -> list[int]:
-        return self.client._request("GET", f"{self.path}/nodes/by-property", query={"key": key, "value": value})["ids"]
+    def nodes_with_property(self, key: str, value: Any | None = None, logical_graph_id: str | None = None) -> list[int]:
+        return self.client._request(
+            "GET", f"{self.path}/nodes/by-property", query={"key": key, "value": value, "logical_graph_id": logical_graph_id}
+        )["ids"]
 
-    def get_node_id(self, external_id: str) -> int | None:
-        value = self.client._request("GET", f"{self.path}/nodes/by-external-id/{_quote(external_id)}")["id"]
+    def get_node_id(self, external_id: str, logical_graph_id: str | None = None) -> int | None:
+        value = self.client._request(
+            "GET", f"{self.path}/nodes/by-external-id/{_quote(external_id)}", query={"logical_graph_id": logical_graph_id}
+        )["id"]
         return None if value is None else int(value)
 
-    def edges_by_type(self, edge_type: str) -> list[int]:
-        return self.client._request("GET", f"{self.path}/edges/by-type/{_quote(edge_type)}")["ids"]
+    def edges_by_type(self, edge_type: str, logical_graph_id: str | None = None) -> list[int]:
+        return self.client._request(
+            "GET", f"{self.path}/edges/by-type/{_quote(edge_type)}", query={"logical_graph_id": logical_graph_id}
+        )["ids"]
 
-    def edges_with_property(self, key: str, value: Any | None = None) -> list[int]:
-        return self.client._request("GET", f"{self.path}/edges/by-property", query={"key": key, "value": value})["ids"]
+    def edges_with_property(self, key: str, value: Any | None = None, logical_graph_id: str | None = None) -> list[int]:
+        return self.client._request(
+            "GET", f"{self.path}/edges/by-property", query={"key": key, "value": value, "logical_graph_id": logical_graph_id}
+        )["ids"]
 
     def add_node(
         self,
         external_id: str | None = None,
         labels: list[str] | None = None,
         properties: dict[str, Any] | None = None,
+        logical_graph_id: str | None = None,
     ) -> int:
         return int(
             self.client._request(
                 "POST",
                 f"{self.path}/nodes",
-                {"external_id": external_id, "labels": labels, "properties": properties},
+                {"external_id": external_id, "labels": labels, "properties": properties, "logical_graph_id": logical_graph_id},
             )["id"]
         )
 
-    def add_nodes(self, records: list[dict[str, Any]]) -> list[int]:
-        return self.client._request("POST", f"{self.path}/nodes/batch", {"records": records})["ids"]
+    def add_nodes(self, records: list[dict[str, Any]], logical_graph_id: str | None = None) -> list[int]:
+        return self.client._request(
+            "POST", f"{self.path}/nodes/batch", {"records": records, "logical_graph_id": logical_graph_id}
+        )["ids"]
 
-    def get_node(self, node_id: int) -> dict[str, Any]:
-        return self.client._request("GET", f"{self.path}/nodes/{node_id}")["node"]
+    def get_node(self, node_id: int, logical_graph_id: str | None = None) -> dict[str, Any]:
+        return self.client._request(
+            "GET", f"{self.path}/nodes/{node_id}", query={"logical_graph_id": logical_graph_id}
+        )["node"]
 
     def update_node(
         self,
@@ -281,6 +318,7 @@ class RemoteGraph:
         remove_labels: list[str] | None = None,
         set_properties: dict[str, Any] | None = None,
         remove_properties: list[str] | None = None,
+        logical_graph_id: str | None = None,
     ) -> dict[str, Any]:
         return self.client._request(
             "PATCH",
@@ -291,11 +329,16 @@ class RemoteGraph:
                 "remove_labels": remove_labels,
                 "set_properties": set_properties,
                 "remove_properties": remove_properties,
+                "logical_graph_id": logical_graph_id,
             },
         )["node"]
 
-    def delete_node(self, node_id: int, detach: bool = False) -> bool:
-        return bool(self.client._request("DELETE", f"{self.path}/nodes/{node_id}", query={"detach": detach})["deleted"])
+    def delete_node(self, node_id: int, detach: bool = False, logical_graph_id: str | None = None) -> bool:
+        return bool(
+            self.client._request(
+                "DELETE", f"{self.path}/nodes/{node_id}", query={"detach": detach, "logical_graph_id": logical_graph_id}
+            )["deleted"]
+        )
 
     def add_edge(
         self,
@@ -303,35 +346,43 @@ class RemoteGraph:
         target: int,
         edge_type: str,
         properties: dict[str, Any] | None = None,
+        logical_graph_id: str | None = None,
     ) -> int:
         return int(
             self.client._request(
                 "POST",
                 f"{self.path}/edges",
-                {"source": source, "target": target, "edge_type": edge_type, "properties": properties},
+                {"source": source, "target": target, "edge_type": edge_type, "properties": properties, "logical_graph_id": logical_graph_id},
             )["id"]
         )
 
-    def add_edges(self, records: list[dict[str, Any]]) -> list[int]:
-        return self.client._request("POST", f"{self.path}/edges/batch", {"records": records})["ids"]
+    def add_edges(self, records: list[dict[str, Any]], logical_graph_id: str | None = None) -> list[int]:
+        return self.client._request(
+            "POST", f"{self.path}/edges/batch", {"records": records, "logical_graph_id": logical_graph_id}
+        )["ids"]
 
-    def get_edge(self, edge_id: int) -> dict[str, Any]:
-        return self.client._request("GET", f"{self.path}/edges/{edge_id}")["edge"]
+    def get_edge(self, edge_id: int, logical_graph_id: str | None = None) -> dict[str, Any]:
+        return self.client._request(
+            "GET", f"{self.path}/edges/{edge_id}", query={"logical_graph_id": logical_graph_id}
+        )["edge"]
 
     def update_edge(
         self,
         edge_id: int,
         set_properties: dict[str, Any] | None = None,
         remove_properties: list[str] | None = None,
+        logical_graph_id: str | None = None,
     ) -> dict[str, Any]:
         return self.client._request(
             "PATCH",
             f"{self.path}/edges/{edge_id}",
-            {"set_properties": set_properties, "remove_properties": remove_properties},
+            {"set_properties": set_properties, "remove_properties": remove_properties, "logical_graph_id": logical_graph_id},
         )["edge"]
 
-    def delete_edge(self, edge_id: int) -> bool:
-        return bool(self.client._request("DELETE", f"{self.path}/edges/{edge_id}")["deleted"])
+    def delete_edge(self, edge_id: int, logical_graph_id: str | None = None) -> bool:
+        return bool(
+            self.client._request("DELETE", f"{self.path}/edges/{edge_id}", query={"logical_graph_id": logical_graph_id})["deleted"]
+        )
 
     def fulltext_indexes(self) -> list[dict[str, Any]]:
         return self.client._request("GET", f"{self.path}/fulltext/indexes")["indexes"]
@@ -365,6 +416,7 @@ class RemoteGraph:
         properties: dict[str, Any] | None = None,
         limit: int = 20,
         offset: int = 0,
+        logical_graph_id: str | None = None,
     ) -> list[dict[str, Any]]:
         return self.client._request(
             "POST",
@@ -377,6 +429,7 @@ class RemoteGraph:
                 "properties": properties,
                 "limit": limit,
                 "offset": offset,
+                "logical_graph_id": logical_graph_id,
             },
         )["results"]
 
@@ -408,27 +461,39 @@ class RemoteGraph:
     def drop_vector_index(self, index: str) -> dict[str, Any]:
         return self.client._request("DELETE", f"{self.path}/vector/indexes/{_quote(index)}")
 
-    def upsert_vector(self, index: str, entity_id: int, vector: list[float]) -> bool:
+    def upsert_vector(self, index: str, entity_id: int, vector: list[float], logical_graph_id: str | None = None) -> bool:
         return bool(
-            self.client._request("PUT", f"{self.path}/vector/{_quote(index)}/{entity_id}", {"vector": vector})[
+            self.client._request(
+                "PUT", f"{self.path}/vector/{_quote(index)}/{entity_id}", {"vector": vector, "logical_graph_id": logical_graph_id}
+            )[
                 "upserted"
             ]
         )
 
-    def upsert_vectors(self, index: str, vectors: dict[int, list[float]]) -> bool:
-        return bool(self.client._request("PUT", f"{self.path}/vector/{_quote(index)}/batch", {"vectors": vectors})["upserted"])
-
-    def get_vector(self, index: str, entity_id: int) -> list[float]:
-        return self.client._request("GET", f"{self.path}/vector/{_quote(index)}/{entity_id}")["vector"]
-
-    def delete_vector(self, index: str, entity_id: int) -> bool:
-        return bool(self.client._request("DELETE", f"{self.path}/vector/{_quote(index)}/{entity_id}")["deleted"])
-
-    def delete_vectors(self, index: str, entity_ids: list[int]) -> bool:
+    def upsert_vectors(self, index: str, vectors: dict[int, list[float]], logical_graph_id: str | None = None) -> bool:
         return bool(
-            self.client._request("POST", f"{self.path}/vector/{_quote(index)}/delete-batch", {"entity_ids": entity_ids})[
-                "deleted"
-            ]
+            self.client._request(
+                "PUT", f"{self.path}/vector/{_quote(index)}/batch", {"vectors": vectors, "logical_graph_id": logical_graph_id}
+            )["upserted"]
+        )
+
+    def get_vector(self, index: str, entity_id: int, logical_graph_id: str | None = None) -> list[float]:
+        return self.client._request(
+            "GET", f"{self.path}/vector/{_quote(index)}/{entity_id}", query={"logical_graph_id": logical_graph_id}
+        )["vector"]
+
+    def delete_vector(self, index: str, entity_id: int, logical_graph_id: str | None = None) -> bool:
+        return bool(
+            self.client._request(
+                "DELETE", f"{self.path}/vector/{_quote(index)}/{entity_id}", query={"logical_graph_id": logical_graph_id}
+            )["deleted"]
+        )
+
+    def delete_vectors(self, index: str, entity_ids: list[int], logical_graph_id: str | None = None) -> bool:
+        return bool(
+            self.client._request(
+                "POST", f"{self.path}/vector/{_quote(index)}/delete-batch", {"entity_ids": entity_ids, "logical_graph_id": logical_graph_id}
+            )["deleted"]
         )
 
     def search_vector(
@@ -441,11 +506,14 @@ class RemoteGraph:
         min_score: float | None = None,
         limit: int = 20,
         offset: int = 0,
+        logical_graph_id: str | None = None,
     ) -> list[dict[str, Any]]:
+        body = _vector_search_body(query_vector, labels, edge_type, properties, min_score, limit, offset)
+        body["logical_graph_id"] = logical_graph_id
         return self.client._request(
             "POST",
             f"{self.path}/vector/{_quote(index)}/search",
-            _vector_search_body(query_vector, labels, edge_type, properties, min_score, limit, offset),
+            body,
         )["results"]
 
     def search_vectors(
@@ -458,6 +526,7 @@ class RemoteGraph:
         min_score: float | None = None,
         limit: int = 20,
         offset: int = 0,
+        logical_graph_id: str | None = None,
     ) -> list[list[dict[str, Any]]]:
         return self.client._request(
             "POST",
@@ -470,6 +539,7 @@ class RemoteGraph:
                 "min_score": min_score,
                 "limit": limit,
                 "offset": offset,
+                "logical_graph_id": logical_graph_id,
             },
         )["results"]
 
@@ -488,6 +558,7 @@ class RemoteGraph:
         text_weight: float = 1.0,
         vector_weight: float = 1.0,
         graph_weight: float = 0.1,
+        logical_graph_id: str | None = None,
     ) -> list[dict[str, Any]]:
         return self.client._request(
             "POST",
@@ -506,14 +577,17 @@ class RemoteGraph:
                 "text_weight": text_weight,
                 "vector_weight": vector_weight,
                 "graph_weight": graph_weight,
+                "logical_graph_id": logical_graph_id,
             },
         )["results"]
 
     def query_schema(self) -> dict[str, Any]:
         return self.client._request("GET", f"{self.path}/query/schema")["schema"]
 
-    def query(self, spec: dict[str, Any], profile: bool = False) -> Any:
-        return self.client._request("POST", f"{self.path}/query", {"spec": spec, "profile": profile})["result"]
+    def query(self, spec: dict[str, Any], profile: bool = False, logical_graph_id: str | None = None) -> Any:
+        return self.client._request(
+            "POST", f"{self.path}/query", {"spec": spec, "profile": profile, "logical_graph_id": logical_graph_id}
+        )["result"]
 
     def import_nodes_csv(self, path: str) -> list[int]:
         return self.client._request("POST", f"{self.path}/import/nodes/csv", {"path": path})["ids"]
@@ -553,25 +627,25 @@ class RemoteGraph:
             "results"
         ]
 
-    def neighbors(self, node_id: int, direction: str = "out", edge_type: str | None = None) -> list[int]:
+    def neighbors(self, node_id: int, direction: str = "out", edge_type: str | None = None, logical_graph_id: str | None = None) -> list[int]:
         return self.client._request(
             "GET",
             f"{self.path}/traversal/neighbors/{node_id}",
-            query={"direction": direction, "edge_type": edge_type},
+            query={"direction": direction, "edge_type": edge_type, "logical_graph_id": logical_graph_id},
         )["ids"]
 
-    def k_hop(self, start: int, hops: int, direction: str = "out", edge_type: str | None = None) -> list[int]:
+    def k_hop(self, start: int, hops: int, direction: str = "out", edge_type: str | None = None, logical_graph_id: str | None = None) -> list[int]:
         return self.client._request(
             "GET",
             f"{self.path}/traversal/k-hop",
-            query={"start": start, "hops": hops, "direction": direction, "edge_type": edge_type},
+            query={"start": start, "hops": hops, "direction": direction, "edge_type": edge_type, "logical_graph_id": logical_graph_id},
         )["ids"]
 
-    def frontier(self, starts: list[int], steps: int, direction: str = "out", edge_type: str | None = None) -> list[int]:
+    def frontier(self, starts: list[int], steps: int, direction: str = "out", edge_type: str | None = None, logical_graph_id: str | None = None) -> list[int]:
         return self.client._request(
             "POST",
             f"{self.path}/traversal/frontier",
-            {"starts": starts, "steps": steps, "direction": direction, "edge_type": edge_type},
+            {"starts": starts, "steps": steps, "direction": direction, "edge_type": edge_type, "logical_graph_id": logical_graph_id},
         )["ids"]
 
     def bfs(
@@ -580,11 +654,12 @@ class RemoteGraph:
         direction: str = "out",
         edge_type: str | None = None,
         max_depth: int | None = None,
+        logical_graph_id: str | None = None,
     ) -> list[int]:
         return self.client._request(
             "GET",
             f"{self.path}/algorithms/bfs",
-            query={"start": start, "direction": direction, "edge_type": edge_type, "max_depth": max_depth},
+            query={"start": start, "direction": direction, "edge_type": edge_type, "max_depth": max_depth, "logical_graph_id": logical_graph_id},
         )["ids"]
 
     def shortest_path(
@@ -594,6 +669,7 @@ class RemoteGraph:
         direction: str = "out",
         edge_type: str | None = None,
         weight_property: str | None = None,
+        logical_graph_id: str | None = None,
     ) -> dict[str, Any] | None:
         return self.client._request(
             "GET",
@@ -604,12 +680,13 @@ class RemoteGraph:
                 "direction": direction,
                 "edge_type": edge_type,
                 "weight_property": weight_property,
+                "logical_graph_id": logical_graph_id,
             },
         )["path"]
 
-    def connected_components(self, edge_type: str | None = None) -> list[list[int]]:
+    def connected_components(self, edge_type: str | None = None, logical_graph_id: str | None = None) -> list[list[int]]:
         return self.client._request(
-            "GET", f"{self.path}/algorithms/connected-components", query={"edge_type": edge_type}
+            "GET", f"{self.path}/algorithms/connected-components", query={"edge_type": edge_type, "logical_graph_id": logical_graph_id}
         )["components"]
 
     def pagerank(
@@ -618,11 +695,12 @@ class RemoteGraph:
         damping: float = 0.85,
         tolerance: float | None = None,
         edge_type: str | None = None,
+        logical_graph_id: str | None = None,
     ) -> dict[str, float]:
         return self.client._request(
             "GET",
             f"{self.path}/algorithms/pagerank",
-            query={"iterations": iterations, "damping": damping, "tolerance": tolerance, "edge_type": edge_type},
+            query={"iterations": iterations, "damping": damping, "tolerance": tolerance, "edge_type": edge_type, "logical_graph_id": logical_graph_id},
         )["scores"]
 
     def random_walk(
@@ -632,20 +710,23 @@ class RemoteGraph:
         direction: str = "out",
         edge_type: str | None = None,
         seed: int | None = None,
+        logical_graph_id: str | None = None,
     ) -> list[int]:
         return self.client._request(
             "GET",
             f"{self.path}/algorithms/random-walk",
-            query={"start": start, "steps": steps, "direction": direction, "edge_type": edge_type, "seed": seed},
+            query={"start": start, "steps": steps, "direction": direction, "edge_type": edge_type, "seed": seed, "logical_graph_id": logical_graph_id},
         )["ids"]
 
-    def subgraph(self, nodes: list[int], edge_type: str | None = None) -> dict[str, Any]:
-        return self.client._request("POST", f"{self.path}/subgraph", {"nodes": nodes, "edge_type": edge_type})[
-            "snapshot"
-        ]
+    def subgraph(self, nodes: list[int], edge_type: str | None = None, logical_graph_id: str | None = None) -> dict[str, Any]:
+        return self.client._request(
+            "POST", f"{self.path}/subgraph", {"nodes": nodes, "edge_type": edge_type, "logical_graph_id": logical_graph_id}
+        )["snapshot"]
 
-    def compute_batch(self, jobs: list[dict[str, Any]]) -> list[Any]:
-        return self.client._request("POST", f"{self.path}/compute/batch", {"jobs": jobs})["results"]
+    def compute_batch(self, jobs: list[dict[str, Any]], logical_graph_id: str | None = None) -> list[Any]:
+        return self.client._request(
+            "POST", f"{self.path}/compute/batch", {"jobs": jobs, "logical_graph_id": logical_graph_id}
+        )["results"]
 
     def propagate(
         self,
@@ -822,6 +903,38 @@ class RemoteGraph:
 
 
 
+class RemoteLogicalGraph:
+    """Convenience proxy for one logical graph inside a remote physical graph."""
+
+    def __init__(self, graph: RemoteGraph, logical_graph_id: str) -> None:
+        self.graph = graph
+        self.client = graph.client
+        self.name = graph.name
+        self.logical_graph_id = logical_graph_id
+        self.path = graph.path
+
+    def __getattr__(self, name: str):  # type: ignore[no-untyped-def]
+        target = getattr(self.graph, name)
+        if not callable(target):
+            return target
+
+        def call(*args, **kwargs):  # type: ignore[no-untyped-def]
+            if "logical_graph_id" in inspect.signature(target).parameters:
+                kwargs.setdefault("logical_graph_id", self.logical_graph_id)
+            return target(*args, **kwargs)
+
+        return call
+
+    def create(self) -> dict[str, Any]:
+        return self.graph.create_logical_graph(self.logical_graph_id)
+
+    def metadata(self) -> dict[str, Any]:
+        return self.graph.get_logical_graph(self.logical_graph_id)
+
+    def delete(self) -> dict[str, Any]:
+        return self.graph.delete_logical_graph(self.logical_graph_id)
+
+
 class RemoteSnapshot:
     """Read-only remote snapshot resource."""
 
@@ -841,17 +954,17 @@ class RemoteSnapshot:
     def schema(self) -> dict[str, Any]:
         return self.client._request("GET", f"{self.path}/schema")["schema"]
 
-    def node_count(self) -> int:
-        return int(self.client._request("GET", f"{self.path}/nodes/count")["count"])
+    def node_count(self, logical_graph_id: str | None = None) -> int:
+        return int(self.client._request("GET", f"{self.path}/nodes/count", query={"logical_graph_id": logical_graph_id})["count"])
 
-    def edge_count(self) -> int:
-        return int(self.client._request("GET", f"{self.path}/edges/count")["count"])
+    def edge_count(self, logical_graph_id: str | None = None) -> int:
+        return int(self.client._request("GET", f"{self.path}/edges/count", query={"logical_graph_id": logical_graph_id})["count"])
 
-    def node_ids(self) -> list[int]:
-        return self.client._request("GET", f"{self.path}/nodes")["ids"]
+    def node_ids(self, logical_graph_id: str | None = None) -> list[int]:
+        return self.client._request("GET", f"{self.path}/nodes", query={"logical_graph_id": logical_graph_id})["ids"]
 
-    def edge_ids(self) -> list[int]:
-        return self.client._request("GET", f"{self.path}/edges")["ids"]
+    def edge_ids(self, logical_graph_id: str | None = None) -> list[int]:
+        return self.client._request("GET", f"{self.path}/edges", query={"logical_graph_id": logical_graph_id})["ids"]
 
     def get_node(self, node_id: int) -> dict[str, Any]:
         return self.client._request("GET", f"{self.path}/nodes/{node_id}")["node"]
@@ -923,8 +1036,10 @@ class RemoteSnapshot:
             "POST", f"{self.path}/cypher", {"query": query, "parameters": parameters, "profile": profile}
         )["result"]
 
-    def compute_batch(self, jobs: list[dict[str, Any]]) -> list[Any]:
-        return self.client._request("POST", f"{self.path}/compute/batch", {"jobs": jobs})["results"]
+    def compute_batch(self, jobs: list[dict[str, Any]], logical_graph_id: str | None = None) -> list[Any]:
+        return self.client._request(
+            "POST", f"{self.path}/compute/batch", {"jobs": jobs, "logical_graph_id": logical_graph_id}
+        )["results"]
 
     def search_vectors(
         self,

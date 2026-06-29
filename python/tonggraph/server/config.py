@@ -34,6 +34,7 @@ class ServerConfig:
     port: int = 8719
     data_dir: Path = Path(".tonggraph")
     graphs: dict[str, Path] = field(default_factory=dict)
+    graph_logical_graphs: dict[str, bool] = field(default_factory=dict)
     auth_mode: str = "none"
     users: dict[str, UserConfig] = field(default_factory=dict)
     operations: OperationsConfig = field(default_factory=OperationsConfig)
@@ -59,9 +60,17 @@ def parse_config(raw: Mapping[str, Any], *, base_dir: Path | None = None) -> Ser
     data_dir.mkdir(parents=True, exist_ok=True)
 
     graphs = {}
-    for name, path in dict(raw.get("graphs") or {}).items():
+    graph_logical_graphs = {}
+    for name, value in dict(raw.get("graphs") or {}).items():
         graph_name = validate_graph_name(str(name))
-        graphs[graph_name] = resolve_graph_path(data_dir, str(path))
+        if isinstance(value, Mapping):
+            payload = dict(value)
+            graph_path = payload.get("path", f"{graph_name}.db")
+            graph_logical_graphs[graph_name] = bool(payload.get("logical_graphs", False))
+        else:
+            graph_path = value
+            graph_logical_graphs[graph_name] = False
+        graphs[graph_name] = resolve_graph_path(data_dir, str(graph_path))
 
     auth = dict(raw.get("auth") or {})
     auth_mode = str(auth.get("mode", "none"))
@@ -69,7 +78,16 @@ def parse_config(raw: Mapping[str, Any], *, base_dir: Path | None = None) -> Ser
         raise ServerError("invalid_request", "auth.mode must be 'none' or 'token'")
     users = _parse_users(auth.get("users") or {})
     operations = _parse_operations(raw.get("operations") or {})
-    return ServerConfig(host=host, port=port, data_dir=data_dir, graphs=graphs, auth_mode=auth_mode, users=users, operations=operations)
+    return ServerConfig(
+        host=host,
+        port=port,
+        data_dir=data_dir,
+        graphs=graphs,
+        graph_logical_graphs=graph_logical_graphs,
+        auth_mode=auth_mode,
+        users=users,
+        operations=operations,
+    )
 
 
 def validate_graph_name(name: str) -> str:

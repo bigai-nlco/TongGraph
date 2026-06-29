@@ -39,6 +39,10 @@
   import/export, and snapshot retrieval.
 - Adds bare-metal TongGraph Server deployment assets, including a safe config
   template, env example, systemd unit, start, health, and smoke-test scripts.
+- Adds a Chinese client guide for storing and retrieving agent-produced graph
+  JSON through TongGraph Server.
+- Adds TongGraph Server logical graph namespaces so one physical SQLite graph can
+  store multiple client-produced logical graphs selected by `logical_graph_id`.
 
 ### Changed
 

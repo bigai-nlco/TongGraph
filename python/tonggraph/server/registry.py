@@ -35,6 +35,7 @@ class SnapshotEntry:
     created_at: float
     expires_at: float
     snapshot: Any
+    logical_graph_id: str | None = None
 
     def metadata(self) -> dict[str, Any]:
         return {
@@ -43,6 +44,7 @@ class SnapshotEntry:
             "created_at": self.created_at,
             "expires_at": self.expires_at,
             "ttl_seconds": max(0.0, self.expires_at - time.time()),
+            "logical_graph_id": self.logical_graph_id,
         }
 
 
@@ -109,6 +111,7 @@ class GraphEntry:
     path: Path
     worker: GraphWorker | None = None
     created_by: str | None = None
+    logical_graphs: bool = False
 
 
 @dataclass
@@ -136,10 +139,12 @@ class GraphRegistry:
         self._lock = threading.RLock()
         self.state_path = config.data_dir / "server-state.json"
         self.graphs: dict[str, GraphEntry] = {
-            name: GraphEntry(name=name, path=path) for name, path in config.graphs.items()
+            name: GraphEntry(name=name, path=path, logical_graphs=config.graph_logical_graphs.get(name, False))
+            for name, path in config.graphs.items()
         }
         self.grants: dict[str, dict[str, str]] = _config_grants(config)
         self.dynamic_users: dict[str, DynamicUserEntry] = {}
+        self.logical_graphs: dict[str, dict[str, dict[str, Any]]] = {}
         self._load_state()
 
     def authenticate_token(self, token: str) -> dict[str, Any] | None:
@@ -411,6 +416,7 @@ class GraphRegistry:
                     "path": str(entry.path),
                     "open": entry.worker is not None,
                     "created_by": entry.created_by,
+                    "logical_graphs": entry.logical_graphs,
                 }
                 for entry in sorted(self.graphs.values(), key=lambda item: item.name)
             ]
@@ -443,12 +449,19 @@ class GraphRegistry:
             self.grants.setdefault(user_id, {}).pop(graph, None)
             self._save_state()
 
-    def create_graph(self, name: str, *, created_by: str | None = None, grants: dict[str, str] | None = None) -> GraphEntry:
+    def create_graph(
+        self,
+        name: str,
+        *,
+        created_by: str | None = None,
+        grants: dict[str, str] | None = None,
+        logical_graphs: bool = False,
+    ) -> GraphEntry:
         name = validate_graph_name(name)
         with self._lock:
             if name in self.graphs:
                 raise ServerError("graph_already_exists", f"graph {name!r} already exists", status_code=409, graph=name)
-            entry = GraphEntry(name=name, path=default_graph_path(self.config.data_dir, name), created_by=created_by)
+            entry = GraphEntry(name=name, path=default_graph_path(self.config.data_dir, name), created_by=created_by, logical_graphs=logical_graphs)
             entry.worker = GraphWorker(entry.path)
             self.graphs[name] = entry
             for user_id, access in (grants or {}).items():
@@ -459,6 +472,74 @@ class GraphRegistry:
                 self.grants.setdefault(created_by, {})[name] = "write"
             self._save_state()
             return entry
+
+    def logical_graphs_enabled(self, name: str) -> bool:
+        return self.get_entry(name).logical_graphs
+
+    def list_logical_graphs(self, graph: str) -> list[dict[str, Any]]:
+        graph = validate_graph_name(graph)
+        with self._lock:
+            self._require_logical_graphs_locked(graph)
+            entries = self.logical_graphs.get(graph, {})
+            return [dict(value) for _, value in sorted(entries.items())]
+
+    def get_logical_graph(self, graph: str, logical_graph_id: str) -> dict[str, Any]:
+        graph = validate_graph_name(graph)
+        logical_graph_id = validate_graph_name(logical_graph_id)
+        with self._lock:
+            self._require_logical_graphs_locked(graph)
+            entry = self.logical_graphs.get(graph, {}).get(logical_graph_id)
+            if entry is None:
+                raise ServerError("logical_graph_not_found", f"logical graph {logical_graph_id!r} not found", status_code=404, graph=graph)
+            return dict(entry)
+
+    def ensure_logical_graph(self, graph: str, logical_graph_id: str, *, created_by: str | None = None) -> dict[str, Any]:
+        graph = validate_graph_name(graph)
+        logical_graph_id = validate_graph_name(logical_graph_id)
+        with self._lock:
+            self._require_logical_graphs_locked(graph)
+            entries = self.logical_graphs.setdefault(graph, {})
+            existing = entries.get(logical_graph_id)
+            now = time.time()
+            if existing is not None:
+                return dict(existing)
+            entry = {
+                "logical_graph_id": logical_graph_id,
+                "created_by": created_by,
+                "created_at": now,
+                "updated_at": now,
+            }
+            entries[logical_graph_id] = entry
+            self._save_state()
+            return dict(entry)
+
+    def delete_logical_graph(self, graph: str, logical_graph_id: str) -> dict[str, Any]:
+        graph = validate_graph_name(graph)
+        logical_graph_id = validate_graph_name(logical_graph_id)
+        with self._lock:
+            self._require_logical_graphs_locked(graph)
+            if logical_graph_id not in self.logical_graphs.get(graph, {}):
+                raise ServerError("logical_graph_not_found", f"logical graph {logical_graph_id!r} not found", status_code=404, graph=graph)
+
+        from .logical import LOGICAL_GRAPH_PROPERTY
+
+        def op(graph_obj: Graph) -> dict[str, Any]:
+            node_ids = list(graph_obj.nodes_with_property(LOGICAL_GRAPH_PROPERTY, logical_graph_id))
+            edge_ids = list(graph_obj.edges_with_property(LOGICAL_GRAPH_PROPERTY, logical_graph_id))
+            for node_id in node_ids:
+                graph_obj.delete_node(node_id, detach=True)
+            for edge_id in edge_ids:
+                try:
+                    graph_obj.delete_edge(edge_id)
+                except Exception:
+                    pass
+            return {"deleted_nodes": len(node_ids), "deleted_edges": len(edge_ids)}
+
+        deleted = self.call(graph, op)
+        with self._lock:
+            self.logical_graphs.setdefault(graph, {}).pop(logical_graph_id, None)
+            self._save_state()
+        return {"logical_graph_id": logical_graph_id, "deleted": True, **deleted}
 
     def get_entry(self, name: str) -> GraphEntry:
         name = validate_graph_name(name)
@@ -485,7 +566,7 @@ class GraphRegistry:
         assert entry.worker is not None
         return entry.worker.call_context(func)
 
-    def create_snapshot(self, name: str, owner_user_id: str, ttl_seconds: float | None = None) -> dict[str, Any]:
+    def create_snapshot(self, name: str, owner_user_id: str, ttl_seconds: float | None = None, logical_graph_id: str | None = None) -> dict[str, Any]:
         ttl = DEFAULT_SNAPSHOT_TTL_SECONDS if ttl_seconds is None else ttl_seconds
         if ttl <= 0:
             raise ServerError("invalid_request", "snapshot ttl_seconds must be positive")
@@ -495,12 +576,15 @@ class GraphRegistry:
             _prune_snapshots(context)
             now = time.time()
             snapshot_id = str(uuid.uuid4())
+            from .logical import scoped_graph_view
+
             entry = SnapshotEntry(
                 snapshot_id=snapshot_id,
                 owner_user_id=owner_user_id,
                 created_at=now,
                 expires_at=now + ttl,
-                snapshot=context.graph.snapshot(),
+                snapshot=scoped_graph_view(context.graph, logical_graph_id) if logical_graph_id is not None else context.graph.snapshot(),
+                logical_graph_id=logical_graph_id,
             )
             context.snapshots[snapshot_id] = entry
             return entry.metadata()
@@ -557,7 +641,9 @@ class GraphRegistry:
                 "name": entry.name,
                 "open": entry.worker is not None,
                 "created_by": entry.created_by,
+                "logical_graphs": entry.logical_graphs,
             }
+            item["logical_graphs"] = entry.logical_graphs
             if entry.worker is not None:
                 def counts(context: GraphWorkerContext) -> dict[str, Any]:
                     _prune_snapshots(context)
@@ -666,6 +752,13 @@ class GraphRegistry:
         if source_sidecar.exists():
             shutil.copytree(source_sidecar, sidecar)
 
+    def _require_logical_graphs_locked(self, graph: str) -> None:
+        entry = self.graphs.get(graph)
+        if entry is None:
+            raise ServerError("graph_not_found", f"graph {graph!r} not found", status_code=404, graph=graph)
+        if not entry.logical_graphs:
+            raise ServerError("invalid_request", f"graph {graph!r} does not have logical graphs enabled", graph=graph)
+
     def _dynamic_entry_locked(self, user_id: str) -> DynamicUserEntry:
         entry = self.dynamic_users.get(user_id)
         if entry is not None:
@@ -734,9 +827,28 @@ class GraphRegistry:
                     name=graph_name,
                     path=(self.config.data_dir / payload.get("path", f"{graph_name}.db")).resolve(),
                     created_by=payload.get("created_by"),
+                    logical_graphs=bool(payload.get("logical_graphs", False)),
+                )
+            else:
+                self.graphs[graph_name].logical_graphs = bool(
+                    payload.get("logical_graphs", self.graphs[graph_name].logical_graphs)
                 )
         for user_id, grants in dict(state.get("grants") or {}).items():
             self.grants.setdefault(str(user_id), {}).update({str(name): str(access) for name, access in dict(grants).items()})
+        for graph_name, entries in dict(state.get("logical_graphs") or {}).items():
+            graph_name = validate_graph_name(str(graph_name))
+            if graph_name not in self.graphs:
+                continue
+            self.logical_graphs.setdefault(graph_name, {})
+            for logical_graph_id, payload in dict(entries or {}).items():
+                logical_graph_id = validate_graph_name(str(logical_graph_id))
+                payload = dict(payload or {})
+                self.logical_graphs[graph_name][logical_graph_id] = {
+                    "logical_graph_id": logical_graph_id,
+                    "created_by": payload.get("created_by"),
+                    "created_at": float(payload.get("created_at", 0.0)),
+                    "updated_at": float(payload.get("updated_at", payload.get("created_at", 0.0))),
+                }
         for user_id, payload in dict(state.get("users") or {}).items():
             payload = dict(payload or {})
             user_id = validate_user_id(str(user_id))
@@ -755,6 +867,7 @@ class GraphRegistry:
             name: {
                 "path": _relative_path(entry.path, self.config.data_dir),
                 "created_by": entry.created_by,
+                "logical_graphs": entry.logical_graphs,
             }
             for name, entry in self.graphs.items()
             if name not in self.config.graphs
@@ -762,6 +875,7 @@ class GraphRegistry:
         state = {
             "graphs": dynamic_graphs,
             "grants": self.grants,
+            "logical_graphs": self.logical_graphs,
             "users": {user_id: entry.state() for user_id, entry in sorted(self.dynamic_users.items())},
         }
         tmp = self.state_path.with_suffix(".json.tmp")

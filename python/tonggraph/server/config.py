@@ -22,6 +22,13 @@ class UserConfig:
 
 
 @dataclass(frozen=True)
+class OperationsConfig:
+    request_logging: bool = True
+    request_timeout_seconds: float | None = None
+    metrics: bool = True
+
+
+@dataclass(frozen=True)
 class ServerConfig:
     host: str = "127.0.0.1"
     port: int = 8719
@@ -29,6 +36,7 @@ class ServerConfig:
     graphs: dict[str, Path] = field(default_factory=dict)
     auth_mode: str = "none"
     users: dict[str, UserConfig] = field(default_factory=dict)
+    operations: OperationsConfig = field(default_factory=OperationsConfig)
 
 
 def load_config(path: str | Path | None = None) -> ServerConfig:
@@ -60,7 +68,8 @@ def parse_config(raw: Mapping[str, Any], *, base_dir: Path | None = None) -> Ser
     if auth_mode not in {"none", "token"}:
         raise ServerError("invalid_request", "auth.mode must be 'none' or 'token'")
     users = _parse_users(auth.get("users") or {})
-    return ServerConfig(host=host, port=port, data_dir=data_dir, graphs=graphs, auth_mode=auth_mode, users=users)
+    operations = _parse_operations(raw.get("operations") or {})
+    return ServerConfig(host=host, port=port, data_dir=data_dir, graphs=graphs, auth_mode=auth_mode, users=users, operations=operations)
 
 
 def validate_graph_name(name: str) -> str:
@@ -117,3 +126,16 @@ def _normalize_access(value: Any) -> str:
     if access not in {"read", "write"}:
         raise ServerError("invalid_request", "graph access must be 'read' or 'write'")
     return access
+
+
+def _parse_operations(raw_operations: Mapping[str, Any]) -> OperationsConfig:
+    timeout = raw_operations.get("request_timeout_seconds")
+    if timeout is not None:
+        timeout = float(timeout)
+        if timeout <= 0:
+            raise ServerError("invalid_request", "operations.request_timeout_seconds must be positive")
+    return OperationsConfig(
+        request_logging=bool(raw_operations.get("request_logging", True)),
+        request_timeout_seconds=timeout,
+        metrics=bool(raw_operations.get("metrics", True)),
+    )

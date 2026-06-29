@@ -260,6 +260,35 @@ class GraphRegistry:
 
         return self.call_context(name, op)
 
+
+    def graph_summary(self) -> dict[str, Any]:
+        with self._lock:
+            entries = sorted(self.graphs.values(), key=lambda item: item.name)
+            open_entries = [entry for entry in entries if entry.worker is not None]
+        graph_items: list[dict[str, Any]] = []
+        for entry in entries:
+            item: dict[str, Any] = {
+                "name": entry.name,
+                "open": entry.worker is not None,
+                "created_by": entry.created_by,
+            }
+            if entry.worker is not None:
+                def counts(context: GraphWorkerContext) -> dict[str, Any]:
+                    _prune_snapshots(context)
+                    return {
+                        "node_count": context.graph.node_count(),
+                        "edge_count": context.graph.edge_count(),
+                        "snapshot_count": len(context.snapshots),
+                    }
+
+                item.update(self.call_context(entry.name, counts))
+            graph_items.append(item)
+        return {
+            "configured_graphs": len(entries),
+            "open_graphs": len(open_entries),
+            "graphs": graph_items,
+        }
+
     def close_all(self) -> None:
         with self._lock:
             workers = [entry.worker for entry in self.graphs.values() if entry.worker is not None]

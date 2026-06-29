@@ -23,6 +23,8 @@
   endpoints.
 - Adds a synchronous `TongGraphClient` for the local server using Python standard
   library HTTP APIs and JSON-compatible return values.
+- Adds TongGraph Server operations support with request logging, JSON metrics,
+  elapsed-time headers, request timeout errors, and graph lifecycle summaries.
 
 ### Changed
 

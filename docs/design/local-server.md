@@ -12,7 +12,8 @@ the Python package directly.
     authentication, graph-level access control, administrator graph creation,
     persisted server control-plane state, core storage/retrieval/query
     endpoints, traversal and runtime algorithms, batch compute, TTL-bound
-    read-only snapshots, and a synchronous Python HTTP client.
+    read-only snapshots, a synchronous Python HTTP client, and basic operations
+    support for request logging, JSON metrics, and request timeout handling.
 
 ## Goal
 
@@ -160,7 +161,7 @@ Expected API groups:
 | Query | structured query DSL and selected Cypher endpoints |
 | Compute | traversal, algorithms, subgraph extraction, and batch compute |
 | Snapshots | TTL-bound read-only snapshots for stable reads, query, Cypher, and compute |
-| Operations | logging, metrics, local authentication |
+| Operations | request logging, JSON metrics, elapsed-time headers, local authentication |
 
 ## Concurrency Model
 
@@ -209,6 +210,11 @@ default:
   recommending environment variables for shared or committed configs.
 - Clearly document that exposing the server outside a trusted network requires
   authentication and deployment hardening.
+
+Operations support is intentionally local-first: `/metrics` returns JSON for
+internal dashboards or health probes, request logs use Python logging, and
+request timeout handling returns stable JSON errors without attempting to kill
+native graph work already running in a worker thread.
 
 ## Development Plan
 

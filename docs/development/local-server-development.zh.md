@@ -95,11 +95,27 @@ P2A 已实现。当前实现包括：
 - `tonggraph.server` 使用 lazy import，导入 client symbol 不会立刻导入 FastAPI app。
 - P2A client 集成测试使用真实本地 Uvicorn server。
 
+## P2B 完成情况
+
+P2B 已实现。当前实现包括：
+
+- `operations` 配置段：`request_logging`、`request_timeout_seconds`、`metrics`。
+- 请求日志：method、path、status、duration、request id、user id、graph name。
+- 响应头：`x-request-id` 和 `x-tonggraph-elapsed-ms`。
+- JSON metrics endpoint：`GET /metrics`。
+- token auth 模式下 `/metrics` 需要 admin；`auth.mode: none` 时允许本地开发直接访问。
+- metrics 包含请求计数、错误计数、in-flight 数、status/route/method 计数、latency、uptime。
+- metrics 包含 graph summary：configured/open graph 数，以及已打开 graph 的 node/edge/snapshot 数。
+- server-side request timeout：超时返回稳定 JSON error，`code=timeout`，HTTP 504。
+- ASGI lifespan shutdown 会调用 registry 关闭 graph worker，释放 open 状态。
+- P2B operations 集成测试。
+
 当前已知边界：
 
 - 尚未实现 inference endpoints。
-- 尚未实现 metrics、request logging、server-side timeout 配置。
+- 尚未实现 token 轮换或更完整的用户管理接口。
 - Python client 是同步 client，不负责启动或管理 server 进程。
+- Timeout 在 ASGI 请求层生效，不会强行杀掉已经进入 native/Rust 层的 graph worker 操作。
 - Snapshot 是内存资源，不会跨 server restart 保留。
 - Cypher 读写判断使用关键字启发式；复杂 Cypher 权限策略后续需要加强。
 - 向量检索仍为 exact scan，推荐规模边界需要后续 benchmark 文档确认。
@@ -344,7 +360,7 @@ GraphWorker
 | Snapshot | P1 已完成 | TTL-bound read-only snapshot 查询和计算 |
 | Python HTTP Client | P2A 已完成 | 接近嵌入式 SDK 的同步客户端接口，第一版返回 dict/list |
 | 认证增强 | P2 | token 轮换、用户管理辅助接口 |
-| 可观测性 | P2 | 请求日志、耗时、错误计数、graph metrics |
+| 可观测性 | P2B 已完成 | 请求日志、耗时、错误计数、graph metrics |
 | 概率传播和 BP | P2 | propagate、local_propagate、belief_propagation |
 | 备份/导出 | P3 | SQLite + sidecar 备份、记录导出 |
 | 高级权限 | P3 | per-graph token、角色或 scope |
@@ -426,10 +442,10 @@ GraphWorker
 
 - Python HTTP client，常用方法名尽量贴近 `Graph`，第一版返回 dict / JSON-compatible 数据。已在 P2A 完成。
 - token 轮换或更清晰的 token 加载方式。
-- 请求日志：request id、user id、graph name、路径、耗时、状态码。
-- Metrics endpoint：请求数、错误数、图数量、节点边数量、索引数量。
-- Graceful shutdown：等待正在执行的写操作完成后关闭 graph。
-- 请求超时配置。
+- 请求日志：request id、user id、graph name、路径、耗时、状态码。已在 P2B 完成。
+- Metrics endpoint：请求数、错误数、图数量、节点边数量、snapshot 数。已在 P2B 完成。
+- Graceful shutdown：等待正在执行的写操作完成后关闭 graph。已在 P2B 完成。
+- 请求超时配置。已在 P2B 完成。
 - 概率传播 endpoint：`propagate()`、`local_propagate()`。
 - BP endpoint：variables、factors、evidence、belief_propagation。
 - 配置文档和示例配置文件。

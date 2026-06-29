@@ -23,6 +23,10 @@ port: 8719
 data_dir: .tonggraph
 graphs:
   shared_kg: shared.db
+operations:
+  request_logging: true
+  request_timeout_seconds: 30
+  metrics: true
 auth:
   mode: token
   users:
@@ -149,6 +153,17 @@ curl -X DELETE http://127.0.0.1:8719/graphs/alice_memory/snapshots/$SNAPSHOT_ID 
 
 Snapshots are in-memory, read-only, TTL-bound resources. They are not persisted
 across server restart.
+
+## Operations
+
+```bash
+curl -H 'Authorization: Bearer admin-dev-token' \
+  http://127.0.0.1:8719/metrics
+```
+
+`/metrics` returns JSON request counters, latency totals, status and route
+counts, uptime, and graph summaries. In token auth mode it requires an admin
+token.
 
 ## Current Boundaries
 

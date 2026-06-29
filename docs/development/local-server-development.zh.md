@@ -384,6 +384,7 @@ GraphWorker
 | 概率传播和 BP | P2C 已完成 | propagate、local_propagate、belief_propagation |
 | 备份/导出 | P3A/P3B 已完成 | P3A SQLite + sidecar 本地备份/恢复；P3B 受控 JSONL/CSV import/export |
 | SDK 缺口覆盖 | P3B 已完成 | bulk records、batch vector writes、retrieve_context、query schema、snapshot retrieval |
+| 裸机部署固化 | P3C 已完成 | 安全配置模板、env 示例、systemd、start/health/smoke 脚本 |
 | 高级权限 | P3 | per-graph token、角色或 scope |
 | ANN 向量检索 | P3 | 可选 HNSW/ANN backend |
 
@@ -529,6 +530,20 @@ P3B 已实现。当前实现包括：
 - Python HTTP client wrappers 覆盖 P3B 新增 API。
 - P3B server/client 集成测试覆盖批量写入原子性、权限、路径白名单、context retrieval、snapshot retrieval 和 client workflow。
 
+## P3C 完成情况
+
+P3C 已实现。当前实现包括：
+
+- `deploy/tonggraph-server.yml` 裸机部署配置模板，默认绑定 `127.0.0.1:8719`，使用 `token_env` 读取 token。
+- `deploy/tonggraph-server.env.example` 环境变量模板，避免在配置中提交真实 token。
+- `deploy/systemd/tonggraph-server.service` systemd 示例，使用 env file、working directory 和 restart policy。
+- `scripts/server/start.sh` 正式启动脚本，支持 `TONGGRAPH_CONFIG`、`TONGGRAPH_HOST`、`TONGGRAPH_PORT` 覆盖。
+- `scripts/server/health.sh` health check 脚本。
+- `scripts/server/smoke.sh` 最小 smoke test，覆盖 health、admin token、创建 graph、写节点、读节点和 read-only 拒写。
+- 部署资产测试覆盖配置模板解析、bash 语法和实验 token/graph/user 防泄漏。
+
+P3C 不处理 Docker/Compose/Kubernetes，也不改动当前未跟踪的实验脚本和 `tmp_data`。
+
 ## P3：规模化和强化
 
 这些能力应该等真实使用反馈明确后再做。
@@ -541,7 +556,7 @@ P3B 已实现。当前实现包括：
 - 后台 compaction 调度。
 - 可选 ANN/HNSW 向量检索 backend。
 - 更完整的 Cypher 兼容层。
-- Docker image 和发布产物。
+- Docker image、Compose 和发布产物。
 - 更完整的用户/权限管理控制面，例如多 token、角色、审计和外部身份系统。
 - Python client 轻量 record class。
 - gRPC API。
@@ -734,7 +749,7 @@ P1 继续补：
 - traversal 和 algorithm endpoint 与嵌入式 SDK 行为一致。
 - `compute_batch()`。
 
-当前状态：P1 已完成；P2A/P2B/P2C/P2D/P2E 也已完成。后续主要进入 P3，或根据真实部署反馈补强。
+当前状态：P1、P2A/P2B/P2C/P2D/P2E、P3A/P3B/P3C 均已完成。后续主要进入更深的 P3 强化，或根据真实部署反馈补强。
 
 ## 暂缓问题
 

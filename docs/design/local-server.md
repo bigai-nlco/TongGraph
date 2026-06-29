@@ -15,9 +15,9 @@ the Python package directly.
     endpoints, bulk record and vector writes, context retrieval, controlled
     import/export, traversal and runtime algorithms, batch compute, TTL-bound
     read-only snapshots with retrieval endpoints, inference endpoints for probability transfer and
-    belief propagation, local graph backup/restore, a synchronous Python HTTP
-    client, and basic operations support for request logging, JSON metrics, and
-    request timeout handling.
+    belief propagation, local graph backup/restore, bare-metal deployment
+    assets, a synchronous Python HTTP client, and basic operations support for
+    request logging, JSON metrics, and request timeout handling.
 
 ## Goal
 
@@ -219,14 +219,18 @@ default:
 Operations support is intentionally local-first: `/metrics` returns JSON for
 internal dashboards or health probes, request logs use Python logging, and
 request timeout handling returns stable JSON errors without attempting to kill
-native graph work already running in a worker thread. Backup/restore is local
-filesystem only: archives live under `data_dir/backups`, include the SQLite
-files and `.segments/` sidecar, and do not include in-memory snapshots.
-Import/export is server-side and path-scoped under `data_dir/imports` and
-`data_dir/exports`; clients cannot pass arbitrary filesystem paths. Vector
-search is currently exact scan; local benchmark guidance in the examples
-recommends 10k vectors per index for comfortable interactive use and treats
-100k vectors as higher-latency, low-QPS or batch-oriented territory.
+native graph work already running in a worker thread. Bare-metal deployment
+assets provide a safe config template, env-file example, systemd unit, and
+start/health/smoke scripts for single-node internal services; Docker, Compose,
+Kubernetes, and public-network hardening remain later deployment work.
+Backup/restore is local filesystem only: archives live under `data_dir/backups`,
+include the SQLite files and `.segments/` sidecar, and do not include in-memory
+snapshots. Import/export is server-side and path-scoped under
+`data_dir/imports` and `data_dir/exports`; clients cannot pass arbitrary
+filesystem paths. Vector search is currently exact scan; local benchmark
+guidance in the examples recommends 10k vectors per index for comfortable
+interactive use and treats 100k vectors as higher-latency, low-QPS or
+batch-oriented territory.
 
 ## Development Plan
 

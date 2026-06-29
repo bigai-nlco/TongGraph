@@ -1,0 +1,20 @@
+[Unit]
+Description=TongGraph Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/tonggraph
+EnvironmentFile=/etc/tonggraph/tonggraph-server.env
+ExecStart=/opt/tonggraph/.venv/bin/tonggraph-server --config /etc/tonggraph/tonggraph-server.yml
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=60
+
+# Harden these paths for your deployment user and data directory.
+# User=tonggraph
+# Group=tonggraph
+
+[Install]
+WantedBy=multi-user.target

@@ -37,6 +37,8 @@
 - Adds TongGraph Server SDK gap endpoints and Python client wrappers for bulk
   records, batch vector writes, context retrieval, query schema, controlled
   import/export, and snapshot retrieval.
+- Adds bare-metal TongGraph Server deployment assets, including a safe config
+  template, env example, systemd unit, start, health, and smoke-test scripts.
 
 ### Changed
 

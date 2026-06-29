@@ -336,6 +336,72 @@ restored = admin.restore_backup(
 admin.delete_backup(backup["backup_id"])
 ```
 
+
+## Bare-Metal Deployment
+
+The repository includes deployment assets for a single-node local or internal
+network service:
+
+```text
+deploy/tonggraph-server.yml
+deploy/tonggraph-server.env.example
+deploy/systemd/tonggraph-server.service
+scripts/server/start.sh
+scripts/server/health.sh
+scripts/server/smoke.sh
+```
+
+Use the template config and environment file as a starting point. The template
+binds to `127.0.0.1:8719` and reads tokens from environment variables.
+
+```bash
+cp deploy/tonggraph-server.env.example /tmp/tonggraph-server.env
+# Edit /tmp/tonggraph-server.env and set private token values.
+set -a
+. /tmp/tonggraph-server.env
+set +a
+
+./scripts/server/start.sh
+```
+
+The start script reads `deploy/tonggraph-server.yml` by default. Override it for
+a copied production config:
+
+```bash
+TONGGRAPH_CONFIG=/etc/tonggraph/tonggraph-server.yml \
+TONGGRAPH_HOST=127.0.0.1 \
+TONGGRAPH_PORT=8719 \
+./scripts/server/start.sh
+```
+
+Check health and run a minimal smoke test against an already running server:
+
+```bash
+TONGGRAPH_BASE_URL=http://127.0.0.1:8719 ./scripts/server/health.sh
+
+TONGGRAPH_BASE_URL=http://127.0.0.1:8719 \
+TONGGRAPH_ADMIN_TOKEN="$TONGGRAPH_ADMIN_TOKEN" \
+./scripts/server/smoke.sh
+```
+
+For systemd, copy the config and env file to `/etc/tonggraph/`, install the
+unit from `deploy/systemd/tonggraph-server.service`, then adjust
+`WorkingDirectory`, `ExecStart`, and the service user for your installation
+path.
+
+```bash
+sudo install -d /etc/tonggraph
+sudo cp deploy/tonggraph-server.yml /etc/tonggraph/tonggraph-server.yml
+sudo cp deploy/tonggraph-server.env.example /etc/tonggraph/tonggraph-server.env
+sudo cp deploy/systemd/tonggraph-server.service /etc/systemd/system/tonggraph-server.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now tonggraph-server
+```
+
+The deployment assets are intentionally bare-metal first. Docker, Compose,
+Kubernetes, TLS termination, and public-network hardening are left to later
+deployment work.
+
 ## Operations
 
 ```bash
@@ -368,5 +434,5 @@ Generated results live under `tests/benchmark/.gbench/`, which is gitignored.
 
 The current server is single-node and internal-network oriented. Snapshot
 resources are in-memory and expire by TTL. The server does not provide
-distributed storage, public multi-tenant hosting, or fine-grained node and edge
-permissions.
+distributed storage, public multi-tenant hosting, Docker/Compose deployment
+assets, TLS termination, or fine-grained node and edge permissions.

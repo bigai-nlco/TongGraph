@@ -1,0 +1,34 @@
+# TongGraph Server bare-metal deployment example.
+# Copy this file before editing for a real environment.
+
+host: 127.0.0.1
+port: 8719
+
+data_dir: .tonggraph
+
+graphs:
+  shared_kg:
+    path: shared_kg.db
+    logical_graphs: true
+
+operations:
+  request_logging: true
+  request_timeout_seconds: 30
+  metrics: true
+
+auth:
+  mode: token
+  users:
+    admin:
+      admin: true
+      token_env: TONGGRAPH_ADMIN_TOKEN
+      graphs:
+        "*": write
+    alice:
+      token_env: TONGGRAPH_ALICE_TOKEN
+      graphs:
+        shared_kg: write
+    reader:
+      token_env: TONGGRAPH_READER_TOKEN
+      graphs:
+        shared_kg: read

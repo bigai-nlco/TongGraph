@@ -18,3 +18,9 @@ output/
 docs/codebase/
 .DS_Store
 AGENTS.md
+
+# Server config（可能含明文 token，不要提交）
+tonggraph-server.yml
+tmp_data/
+deploy/tonggraph-server.env
+deploy/.tonggraph/

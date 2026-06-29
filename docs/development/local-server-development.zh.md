@@ -82,11 +82,24 @@ P1 已实现。当前实现包括：
 - Worker 异常返回会剥离 traceback，避免 PyO3 unsendable snapshot 对象被异常 traceback 带到其他线程释放。
 - P1 HTTP 集成测试。
 
+## P2A 完成情况
+
+P2A 已实现。当前实现包括：
+
+- `tonggraph.server.client.TongGraphClient` 同步 Python HTTP client。
+- `RemoteGraph` 和 `RemoteSnapshot`，通过 HTTP 调用已实现的 server API。
+- 使用 Python 标准库 `urllib`，不新增运行时依赖。
+- client 返回 plain dict/list/JSON-compatible 数据，不封装成本地 `Node`、`Edge` 或 `CypherResult` class。
+- 覆盖 service/admin、graph lifecycle、node/edge CRUD、检索、query、Cypher、compute 和 snapshot API。
+- `TongGraphServerError` 映射 server JSON 错误，保留 `code`、`message`、`status_code`、`graph`、`request_id`。
+- `tonggraph.server` 使用 lazy import，导入 client symbol 不会立刻导入 FastAPI app。
+- P2A client 集成测试使用真实本地 Uvicorn server。
+
 当前已知边界：
 
-- 尚未实现 Python HTTP client。
 - 尚未实现 inference endpoints。
-- 尚未实现 metrics、request logging、timeout 配置。
+- 尚未实现 metrics、request logging、server-side timeout 配置。
+- Python client 是同步 client，不负责启动或管理 server 进程。
 - Snapshot 是内存资源，不会跨 server restart 保留。
 - Cypher 读写判断使用关键字启发式；复杂 Cypher 权限策略后续需要加强。
 - 向量检索仍为 exact scan，推荐规模边界需要后续 benchmark 文档确认。
@@ -199,7 +212,7 @@ python/tonggraph/
       compute.py         # traversal, algorithms, subgraph, compute_batch
       snapshots.py       # TTL-bound read-only snapshot endpoints
       inference.py       # P2: propagate 和 belief propagation
-    client.py            # P2: Python HTTP client，第一版返回 dict
+    client.py            # P2A: Python HTTP client，第一版返回 dict/list
 ```
 
 测试和文档建议落点：
@@ -259,7 +272,7 @@ tonggraph-server = "tonggraph.server.cli:main"
 | `server.routes.compute` | traversal、algorithms、`subgraph()`、`compute_batch()` | P1 |
 | `server.routes.snapshots` | TTL-bound read-only snapshot lifecycle、读取、查询和计算 | P1 |
 | `server.routes.inference` | probability transfer、BP | P2 |
-| `server.client` | Python HTTP client | P2 |
+| `server.client` | Python HTTP client，返回 JSON-compatible dict/list | P2A |
 
 ### GraphRegistry 设计要点
 
@@ -329,7 +342,7 @@ GraphWorker
 | Cypher 子集 | P0 | autocommit `cypher()`、单请求事务块 |
 | 遍历和算法 | P1 已完成 | neighbors、k_hop、frontier、BFS、shortest path、PageRank、random walk |
 | Snapshot | P1 已完成 | TTL-bound read-only snapshot 查询和计算 |
-| Python HTTP Client | P2 | 接近嵌入式 SDK 的客户端接口，第一版返回 dict |
+| Python HTTP Client | P2A 已完成 | 接近嵌入式 SDK 的同步客户端接口，第一版返回 dict/list |
 | 认证增强 | P2 | token 轮换、用户管理辅助接口 |
 | 可观测性 | P2 | 请求日志、耗时、错误计数、graph metrics |
 | 概率传播和 BP | P2 | propagate、local_propagate、belief_propagation |
@@ -411,7 +424,7 @@ GraphWorker
 
 必须交付：
 
-- Python HTTP client，常用方法名尽量贴近 `Graph`，第一版返回 dict / JSON-compatible 数据。
+- Python HTTP client，常用方法名尽量贴近 `Graph`，第一版返回 dict / JSON-compatible 数据。已在 P2A 完成。
 - token 轮换或更清晰的 token 加载方式。
 - 请求日志：request id、user id、graph name、路径、耗时、状态码。
 - Metrics endpoint：请求数、错误数、图数量、节点边数量、索引数量。

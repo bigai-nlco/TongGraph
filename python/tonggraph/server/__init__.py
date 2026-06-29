@@ -2,6 +2,29 @@
 
 from __future__ import annotations
 
-from .app import create_app
+from typing import Any
 
-__all__ = ["create_app"]
+__all__ = [
+    "create_app",
+    "TongGraphClient",
+    "TongGraphServerError",
+    "RemoteGraph",
+    "RemoteSnapshot",
+]
+
+
+def __getattr__(name: str) -> Any:
+    if name == "create_app":
+        from .app import create_app
+
+        return create_app
+    if name in {"TongGraphClient", "TongGraphServerError", "RemoteGraph", "RemoteSnapshot"}:
+        from .client import RemoteGraph, RemoteSnapshot, TongGraphClient, TongGraphServerError
+
+        return {
+            "TongGraphClient": TongGraphClient,
+            "TongGraphServerError": TongGraphServerError,
+            "RemoteGraph": RemoteGraph,
+            "RemoteSnapshot": RemoteSnapshot,
+        }[name]
+    raise AttributeError(name)

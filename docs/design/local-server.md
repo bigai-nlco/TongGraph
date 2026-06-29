@@ -11,8 +11,8 @@ the Python package directly.
     `tonggraph[server]` extra. It provides a single-node HTTP API with token
     authentication, graph-level access control, administrator graph creation,
     persisted server control-plane state, core storage/retrieval/query
-    endpoints, traversal and runtime algorithms, batch compute, and TTL-bound
-    read-only snapshots.
+    endpoints, traversal and runtime algorithms, batch compute, TTL-bound
+    read-only snapshots, and a synchronous Python HTTP client.
 
 ## Goal
 
@@ -127,13 +127,17 @@ python/tonggraph/server/
   schemas.py           # request/response models
   serialization.py     # SDK records to JSON-compatible objects
   routes/              # health, admin, records, retrieval, query, compute
-  client.py            # later Python HTTP client
+  client.py            # Python HTTP client
 ```
 
 The package metadata should expose server dependencies through
 `tonggraph[server]` and a console script such as `tonggraph-server`. Embedded SDK
 users should not need to install FastAPI/Uvicorn or other server-only
 dependencies.
+
+The Python HTTP client uses the standard library HTTP stack and returns
+JSON-compatible dictionaries and lists. It can be imported from
+`tonggraph.server.client` without constructing the FastAPI application.
 
 ## API Shape
 

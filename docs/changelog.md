@@ -21,6 +21,8 @@
 - Extends TongGraph Server with traversal, runtime algorithm, `subgraph()`,
   `compute_batch()`, batch vector search, and TTL-bound read-only snapshot HTTP
   endpoints.
+- Adds a synchronous `TongGraphClient` for the local server using Python standard
+  library HTTP APIs and JSON-compatible return values.
 
 ### Changed
 

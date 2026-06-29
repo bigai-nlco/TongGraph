@@ -69,6 +69,42 @@ curl -X POST http://127.0.0.1:8719/graphs/alice_memory/vector/embeddings/search-
   -d '{"query_vectors":[[1.0,0.0],[0.5,0.5]],"limit":3}'
 ```
 
+## Python Client
+
+```python
+from tonggraph.server.client import TongGraphClient
+
+admin = TongGraphClient("http://127.0.0.1:8719", token="admin-dev-token")
+admin.create_graph("alice_memory", grants={"alice": "write"})
+
+client = TongGraphClient("http://127.0.0.1:8719", token="alice-dev-token")
+graph = client.graph("alice_memory")
+
+alice = graph.add_node(
+    "alice",
+    labels=["Person"],
+    properties={"name": "Alice"},
+)
+bob = graph.add_node("bob", labels=["Person"], properties={"name": "Bob"})
+graph.add_edge(alice, bob, "KNOWS", properties={"weight": 1.0})
+
+rows = graph.query({"match": [{"node": "n", "external_id": "alice"}]})
+
+graph.create_vector_index("embeddings", 2, target="node", metric="cosine")
+graph.upsert_vector("embeddings", alice, [1.0, 0.0])
+graph.upsert_vector("embeddings", bob, [0.5, 0.5])
+nearest = graph.search_vectors("embeddings", [[1.0, 0.0], [0.5, 0.5]], limit=1)
+
+snapshot = graph.create_snapshot(ttl_seconds=600)
+graph.add_node("later")
+stable_count = snapshot.node_count()
+
+print(rows, nearest, stable_count)
+```
+
+The first Python client returns JSON-compatible dict/list values. It does not
+start the server process; point it at an already running `tonggraph-server`.
+
 ## Traversal And Compute
 
 ```bash

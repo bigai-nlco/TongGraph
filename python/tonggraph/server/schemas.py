@@ -17,6 +17,24 @@ class CreateGraphRequest(BaseModel):
     grants: dict[str, str] = Field(default_factory=dict)
 
 
+class UserCreateRequest(BaseModel):
+    user_id: str
+    token: str | None = None
+    admin: bool = False
+    disabled: bool = False
+    graphs: dict[str, str] = Field(default_factory=dict)
+
+
+class UserUpdateRequest(BaseModel):
+    admin: bool | None = None
+    disabled: bool | None = None
+    graphs: dict[str, str] | None = None
+
+
+class UserTokenRotateRequest(BaseModel):
+    token: str | None = None
+
+
 class NodeCreateRequest(BaseModel):
     external_id: str | None = None
     labels: list[str] | None = None

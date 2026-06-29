@@ -30,6 +30,8 @@
   and belief propagation.
 - Adds an exact vector search benchmark for embedded and server APIs with 10k and
   100k local scale guidance.
+- Adds TongGraph Server auth management endpoints and Python client wrappers for
+  dynamic users, disabled users, and token rotation.
 
 ### Changed
 

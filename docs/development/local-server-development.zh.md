@@ -130,7 +130,7 @@ P2C 已实现。当前实现包括：
 
 当前已知边界：
 
-- 尚未实现 token 轮换或更完整的用户管理接口。
+- P2E 已实现 token 轮换和基础用户管理接口。
 - Python client 是同步 client，不负责启动或管理 server 进程。
 - Timeout 在 ASGI 请求层生效，不会强行杀掉已经进入 native/Rust 层的 graph worker 操作。
 - Snapshot 是内存资源，不会跨 server restart 保留。
@@ -377,7 +377,7 @@ GraphWorker
 | 遍历和算法 | P1 已完成 | neighbors、k_hop、frontier、BFS、shortest path、PageRank、random walk |
 | Snapshot | P1 已完成 | TTL-bound read-only snapshot 查询和计算 |
 | Python HTTP Client | P2A 已完成 | 接近嵌入式 SDK 的同步客户端接口，第一版返回 dict/list |
-| 认证增强 | P2 | token 轮换、用户管理辅助接口 |
+| 认证增强 | P2E 已完成 | 动态用户、禁用用户、token rotation、用户管理辅助接口 |
 | Exact vector benchmark | P2D 已完成 | 10k/100k exact scan 基准和规模建议 |
 | 可观测性 | P2B 已完成 | 请求日志、耗时、错误计数、graph metrics |
 | 概率传播和 BP | P2C 已完成 | propagate、local_propagate、belief_propagation |
@@ -460,7 +460,7 @@ GraphWorker
 必须交付：
 
 - Python HTTP client，常用方法名尽量贴近 `Graph`，第一版返回 dict / JSON-compatible 数据。已在 P2A 完成。
-- token 轮换或更清晰的 token 加载方式。
+- token 轮换或更清晰的 token 加载方式。已在 P2E 完成。
 - 请求日志：request id、user id、graph name、路径、耗时、状态码。已在 P2B 完成。
 - Metrics endpoint：请求数、错误数、图数量、节点边数量、snapshot 数。已在 P2B 完成。
 - Graceful shutdown：等待正在执行的写操作完成后关闭 graph。已在 P2B 完成。
@@ -488,7 +488,19 @@ P2D 已实现。当前实现包括：
 - 本机结果记录在英文 benchmark 示例文档中。
 - 推荐边界：10k vectors/index 适合交互式本地/内网服务；100k vectors/index 已是较高延迟 exact-scan 层级，适合低 QPS 或批处理。
 
-剩余 P2 项主要是 token 轮换或更完整的用户管理辅助接口。
+## P2E 完成情况
+
+P2E 已实现。当前实现包括：
+
+- 管理员用户管理 API：列出用户、查看用户、创建用户、更新用户、删除动态用户。
+- token rotation API：管理员可传入新 token，或由服务端生成 URL-safe token 并仅在响应中返回一次。
+- disabled 用户状态；禁用后 token 认证失败，重新启用后恢复。
+- 动态用户状态持久化到 `<data_dir>/server-state.json` 的 `users` 段。
+- 配置文件用户仍作为 bootstrap 用户；动态 state 可覆盖其 token/admin/disabled，但不能删除配置身份。
+- Python HTTP client wrappers 覆盖用户管理和 token rotation。
+- P2E server/client 集成测试覆盖认证、授权、轮换、禁用、删除和重启恢复。
+
+P2 当前已基本收口，后续工作进入 P3 或按真实使用反馈补强。
 
 ## P3：规模化和强化
 
@@ -504,7 +516,7 @@ P2D 已实现。当前实现包括：
 - 可选 ANN/HNSW 向量检索 backend。
 - 更完整的 Cypher 兼容层。
 - Docker image 和发布产物。
-- 更完整的用户/权限管理控制面。
+- 更完整的用户/权限管理控制面，例如多 token、角色、审计和外部身份系统。
 - Python client 轻量 record class。
 - gRPC API。
 
@@ -652,7 +664,7 @@ user_id
 
 - `read`：允许 get、list、search、query、cypher read、traversal、algorithm、snapshot read。
 - `write`：包含 read，并允许 add/update/delete、index lifecycle、vector writes、compact、refresh、cypher write。
-- `admin`：允许创建 graph、列出所有 graph、授予或撤销 graph 权限。
+- `admin`：允许创建 graph、列出所有 graph、管理用户、轮换 token、授予或撤销 graph 权限。
 - 暂不支持节点、边、label、property 级别的细粒度权限。
 - 暂不支持普通用户自助创建 graph。
 
@@ -696,16 +708,7 @@ P1 继续补：
 - traversal 和 algorithm endpoint 与嵌入式 SDK 行为一致。
 - `compute_batch()`。
 
-当前状态：P1 已完成，剩余核心 SDK 远程化主要是 P2 的推理和运维体验。
-
-P2 继续补：
-
-- token 配置增强。
-- request logging / metrics。
-- graceful shutdown。
-- timeout。
-- inference endpoints。
-- token 轮换或更完整的用户管理辅助接口。
+当前状态：P1 已完成；P2A/P2B/P2C/P2D/P2E 也已完成。后续主要进入 P3，或根据真实部署反馈补强。
 
 ## 暂缓问题
 

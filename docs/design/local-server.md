@@ -10,7 +10,8 @@ the Python package directly.
     The local server implementation is available as the optional
     `tonggraph[server]` extra. It provides a single-node HTTP API with token
     authentication, graph-level access control, administrator graph creation,
-    persisted server control-plane state, core storage/retrieval/query
+    auth management with token rotation, persisted server control-plane state,
+    core storage/retrieval/query
     endpoints, traversal and runtime algorithms, batch compute, TTL-bound
     read-only snapshots, inference endpoints for probability transfer and
     belief propagation, a synchronous Python HTTP client, and basic operations
@@ -152,7 +153,7 @@ Expected API groups:
 | Group | Examples |
 |---|---|
 | Health | readiness, version, opened graph count |
-| Auth and access | user identity, graph permissions |
+| Auth and access | user identity, graph permissions, dynamic users, disabled users, and token rotation |
 | Admin | create graph, list graphs, grant graph access |
 | Graph lifecycle | open, close, compact, refresh |
 | Records | node and edge create/read/update/delete |
@@ -184,12 +185,12 @@ requirements for the first server.
 The first internal multi-user model can be configuration-driven, with admin APIs
 for dynamic graph creation and permission changes:
 
-- A user is identified by a static token or equivalent internal credential.
-- Tokens may come from environment variables or explicit config values.
+- A user is identified by a bearer token or equivalent internal credential.
+- Tokens may come from environment variables, explicit config values, or administrator-managed dynamic user state.
 - A graph is identified by a configured or administrator-created graph name.
 - Each user has an allowlist of graphs.
 - Each graph grant is either read-only or read-write.
-- Administrator users can create graphs and grant or revoke graph access.
+- Administrator users can create graphs, manage users, disable users, rotate tokens, and grant or revoke graph access.
 - Unknown users, unknown graphs, and missing permissions fail before the request
   reaches the `Graph` handle.
 

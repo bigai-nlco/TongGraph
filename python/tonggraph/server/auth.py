@@ -26,7 +26,7 @@ def authenticate(request: Request) -> User:
     if not header.startswith(prefix):
         raise ServerError("unauthenticated", "missing bearer token", status_code=401)
     token = header[len(prefix):].strip()
-    for user in config.users.values():
-        if user.token and user.token == token:
-            return User(user.user_id, admin=user.admin)
+    user = request.app.state.registry.authenticate_token(token)
+    if user is not None:
+        return User(str(user["user_id"]), admin=bool(user["admin"]))
     raise ServerError("unauthenticated", "invalid bearer token", status_code=401)

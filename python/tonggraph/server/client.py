@@ -84,6 +84,52 @@ class TongGraphClient:
     def revoke_graph(self, graph: str, user: str) -> dict[str, Any]:
         return self._request("DELETE", f"/admin/graphs/{_quote(graph)}/grants/{_quote(user)}")
 
+    def admin_users(self) -> list[dict[str, Any]]:
+        return self._request("GET", "/admin/users")["users"]
+
+    def admin_user(self, user: str) -> dict[str, Any]:
+        return self._request("GET", f"/admin/users/{_quote(user)}")["user"]
+
+    def create_user(
+        self,
+        user_id: str,
+        token: str | None = None,
+        admin: bool = False,
+        disabled: bool = False,
+        graphs: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            "/admin/users",
+            {
+                "user_id": user_id,
+                "token": token,
+                "admin": admin,
+                "disabled": disabled,
+                "graphs": graphs or {},
+            },
+        )["user"]
+
+    def update_user(
+        self,
+        user: str,
+        *,
+        admin: bool | None = None,
+        disabled: bool | None = None,
+        graphs: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        return self._request(
+            "PATCH",
+            f"/admin/users/{_quote(user)}",
+            {"admin": admin, "disabled": disabled, "graphs": graphs},
+        )["user"]
+
+    def rotate_user_token(self, user: str, token: str | None = None) -> dict[str, Any]:
+        return self._request("POST", f"/admin/users/{_quote(user)}/token", {"token": token})
+
+    def delete_user(self, user: str) -> dict[str, Any]:
+        return self._request("DELETE", f"/admin/users/{_quote(user)}")
+
     def _request(
         self,
         method: str,

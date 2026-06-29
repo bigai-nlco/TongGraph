@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import queue
+import secrets
 import threading
 import time
 import uuid
@@ -106,6 +107,25 @@ class GraphEntry:
     created_by: str | None = None
 
 
+@dataclass
+class DynamicUserEntry:
+    user_id: str
+    admin: bool = False
+    token: str | None = None
+    disabled: bool = False
+    created_by: str | None = None
+    updated_at: float = 0.0
+
+    def state(self) -> dict[str, Any]:
+        return {
+            "admin": self.admin,
+            "token": self.token,
+            "disabled": self.disabled,
+            "created_by": self.created_by,
+            "updated_at": self.updated_at,
+        }
+
+
 class GraphRegistry:
     def __init__(self, config: ServerConfig) -> None:
         self.config = config
@@ -115,7 +135,124 @@ class GraphRegistry:
             name: GraphEntry(name=name, path=path) for name, path in config.graphs.items()
         }
         self.grants: dict[str, dict[str, str]] = _config_grants(config)
+        self.dynamic_users: dict[str, DynamicUserEntry] = {}
         self._load_state()
+
+    def authenticate_token(self, token: str) -> dict[str, Any] | None:
+        with self._lock:
+            for user_id in sorted(set(self.config.users) | set(self.dynamic_users)):
+                user = self._effective_user_locked(user_id)
+                if user is not None and not user["disabled"] and user["token"] and user["token"] == token:
+                    return user
+        return None
+
+    def list_users(self) -> list[dict[str, Any]]:
+        with self._lock:
+            users: list[dict[str, Any]] = []
+            for user_id in sorted(set(self.config.users) | set(self.dynamic_users)):
+                user = self._public_user_locked(user_id)
+                if user is not None:
+                    users.append(user)
+            return users
+
+    def get_user(self, user_id: str) -> dict[str, Any]:
+        user_id = validate_user_id(user_id)
+        with self._lock:
+            user = self._public_user_locked(user_id)
+            if user is None:
+                raise ServerError("user_not_found", f"user {user_id!r} not found", status_code=404)
+            return user
+
+    def create_user(
+        self,
+        user_id: str,
+        *,
+        token: str | None = None,
+        admin: bool = False,
+        disabled: bool = False,
+        graphs: dict[str, str] | None = None,
+        created_by: str | None = None,
+    ) -> dict[str, Any]:
+        user_id = validate_user_id(user_id)
+        with self._lock:
+            if user_id in self.config.users or user_id in self.dynamic_users:
+                raise ServerError("conflict", f"user {user_id!r} already exists", status_code=409)
+            now = time.time()
+            self.dynamic_users[user_id] = DynamicUserEntry(
+                user_id=user_id,
+                admin=admin,
+                token=token,
+                disabled=disabled,
+                created_by=created_by,
+                updated_at=now,
+            )
+            if graphs is not None:
+                self._set_user_grants_locked(user_id, graphs)
+            self._save_state()
+            return self._public_user_locked(user_id) or {}
+
+    def update_user(
+        self,
+        user_id: str,
+        *,
+        admin: bool | None = None,
+        disabled: bool | None = None,
+        graphs: dict[str, str] | None = None,
+        updated_by: str | None = None,
+    ) -> dict[str, Any]:
+        del updated_by
+        user_id = validate_user_id(user_id)
+        with self._lock:
+            if user_id not in self.config.users and user_id not in self.dynamic_users:
+                raise ServerError("user_not_found", f"user {user_id!r} not found", status_code=404)
+            entry = self._dynamic_entry_locked(user_id)
+            effective = self._effective_user_locked(user_id)
+            assert effective is not None
+            if admin is not None:
+                entry.admin = admin
+            elif user_id not in self.dynamic_users:
+                entry.admin = bool(effective["admin"])
+            if disabled is not None:
+                entry.disabled = disabled
+            elif user_id not in self.dynamic_users:
+                entry.disabled = bool(effective["disabled"])
+            if user_id not in self.dynamic_users:
+                entry.token = effective["token"]
+            entry.updated_at = time.time()
+            self.dynamic_users[user_id] = entry
+            if graphs is not None:
+                self._set_user_grants_locked(user_id, graphs)
+            self._save_state()
+            return self._public_user_locked(user_id) or {}
+
+    def rotate_user_token(self, user_id: str, *, token: str | None = None, updated_by: str | None = None) -> dict[str, Any]:
+        del updated_by
+        user_id = validate_user_id(user_id)
+        with self._lock:
+            if user_id not in self.config.users and user_id not in self.dynamic_users:
+                raise ServerError("user_not_found", f"user {user_id!r} not found", status_code=404)
+            new_token = token if token is not None else secrets.token_urlsafe(32)
+            entry = self._dynamic_entry_locked(user_id)
+            effective = self._effective_user_locked(user_id)
+            assert effective is not None
+            entry.admin = bool(effective["admin"])
+            entry.disabled = bool(effective["disabled"])
+            entry.token = new_token
+            entry.updated_at = time.time()
+            self.dynamic_users[user_id] = entry
+            self._save_state()
+            public = self._public_user_locked(user_id) or {}
+            return {"user": public, "token": new_token}
+
+    def delete_user(self, user_id: str) -> None:
+        user_id = validate_user_id(user_id)
+        with self._lock:
+            if user_id in self.config.users:
+                raise ServerError("conflict", "configured users cannot be deleted; disable them instead", status_code=409)
+            if user_id not in self.dynamic_users:
+                raise ServerError("user_not_found", f"user {user_id!r} not found", status_code=404)
+            self.dynamic_users.pop(user_id, None)
+            self._save_state()
 
     def list_graphs(self) -> list[dict[str, Any]]:
         with self._lock:
@@ -309,6 +446,63 @@ class GraphRegistry:
     def refresh(self, name: str) -> None:
         self.call(name, lambda graph: graph.refresh())
 
+
+    def _dynamic_entry_locked(self, user_id: str) -> DynamicUserEntry:
+        entry = self.dynamic_users.get(user_id)
+        if entry is not None:
+            return entry
+        return DynamicUserEntry(user_id=user_id, created_by=None, updated_at=time.time())
+
+    def _effective_user_locked(self, user_id: str) -> dict[str, Any] | None:
+        configured = self.config.users.get(user_id)
+        dynamic = self.dynamic_users.get(user_id)
+        if configured is None and dynamic is None:
+            return None
+        token = dynamic.token if dynamic is not None and dynamic.token is not None else (configured.token if configured else None)
+        admin = dynamic.admin if dynamic is not None else (configured.admin if configured else False)
+        disabled = dynamic.disabled if dynamic is not None else False
+        return {
+            "user_id": user_id,
+            "admin": bool(admin),
+            "token": token,
+            "disabled": bool(disabled),
+            "configured": configured is not None,
+            "dynamic": dynamic is not None,
+            "source": "dynamic" if dynamic is not None else "config",
+            "created_by": dynamic.created_by if dynamic is not None else None,
+            "updated_at": dynamic.updated_at if dynamic is not None else None,
+        }
+
+    def _public_user_locked(self, user_id: str) -> dict[str, Any] | None:
+        user = self._effective_user_locked(user_id)
+        if user is None:
+            return None
+        return {
+            "user_id": user_id,
+            "admin": user["admin"],
+            "disabled": user["disabled"],
+            "has_token": bool(user["token"]),
+            "source": user["source"],
+            "configured": user["configured"],
+            "dynamic": user["dynamic"],
+            "created_by": user["created_by"],
+            "updated_at": user["updated_at"],
+            "graphs": dict(self.grants.get(user_id, {})),
+        }
+
+    def _set_user_grants_locked(self, user_id: str, graphs: dict[str, str]) -> None:
+        normalized: dict[str, str] = {}
+        for graph, access in graphs.items():
+            graph_name = str(graph)
+            if graph_name != "*":
+                validate_graph_name(graph_name)
+                if graph_name not in self.graphs:
+                    raise ServerError("graph_not_found", f"graph {graph_name!r} not found", status_code=404, graph=graph_name)
+            if access not in {"read", "write"}:
+                raise ServerError("invalid_request", "graph access must be 'read' or 'write'")
+            normalized[graph_name] = access
+        self.grants[user_id] = normalized
+
     def _load_state(self) -> None:
         if not self.state_path.exists():
             return
@@ -324,6 +518,17 @@ class GraphRegistry:
                 )
         for user_id, grants in dict(state.get("grants") or {}).items():
             self.grants.setdefault(str(user_id), {}).update({str(name): str(access) for name, access in dict(grants).items()})
+        for user_id, payload in dict(state.get("users") or {}).items():
+            payload = dict(payload or {})
+            user_id = validate_user_id(str(user_id))
+            self.dynamic_users[user_id] = DynamicUserEntry(
+                user_id=user_id,
+                admin=bool(payload.get("admin", False)),
+                token=str(payload["token"]) if payload.get("token") is not None else None,
+                disabled=bool(payload.get("disabled", False)),
+                created_by=str(payload["created_by"]) if payload.get("created_by") is not None else None,
+                updated_at=float(payload.get("updated_at", 0.0)),
+            )
 
     def _save_state(self) -> None:
         self.config.data_dir.mkdir(parents=True, exist_ok=True)
@@ -335,12 +540,24 @@ class GraphRegistry:
             for name, entry in self.graphs.items()
             if name not in self.config.graphs
         }
-        state = {"graphs": dynamic_graphs, "grants": self.grants}
+        state = {
+            "graphs": dynamic_graphs,
+            "grants": self.grants,
+            "users": {user_id: entry.state() for user_id, entry in sorted(self.dynamic_users.items())},
+        }
         tmp = self.state_path.with_suffix(".json.tmp")
         with tmp.open("w", encoding="utf-8") as handle:
             json.dump(state, handle, indent=2, sort_keys=True)
             handle.write("\n")
         os.replace(tmp, self.state_path)
+
+
+def validate_user_id(user_id: str) -> str:
+    if not user_id:
+        raise ServerError("invalid_request", "user_id cannot be empty")
+    if not all(ch.isalnum() or ch in {"_", "-", ".", "@"} for ch in user_id):
+        raise ServerError("invalid_request", "user_id may only contain letters, digits, '_', '-', '.' or '@'")
+    return user_id
 
 
 def _config_grants(config: ServerConfig) -> dict[str, dict[str, str]]:

@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 
 from ..access import require_admin
-from ..schemas import CreateGraphRequest, GrantRequest
+from ..schemas import CreateGraphRequest, GrantRequest, UserCreateRequest, UserTokenRotateRequest, UserUpdateRequest
 
 router = APIRouter(prefix="/admin")
 
@@ -33,3 +33,55 @@ async def revoke_graph(request: Request, graph: str, user_id: str) -> dict[str, 
     require_admin(request)
     request.app.state.registry.revoke(user_id, graph)
     return {"graph": graph, "user": user_id, "revoked": True}
+
+
+@router.get("/users")
+async def admin_users(request: Request) -> dict[str, object]:
+    require_admin(request)
+    return {"users": request.app.state.registry.list_users()}
+
+
+@router.get("/users/{user_id}")
+async def admin_user(request: Request, user_id: str) -> dict[str, object]:
+    require_admin(request)
+    return {"user": request.app.state.registry.get_user(user_id)}
+
+
+@router.post("/users")
+async def create_user(request: Request, payload: UserCreateRequest) -> dict[str, object]:
+    user = require_admin(request)
+    created = request.app.state.registry.create_user(
+        payload.user_id,
+        token=payload.token,
+        admin=payload.admin,
+        disabled=payload.disabled,
+        graphs=payload.graphs,
+        created_by=user.user_id,
+    )
+    return {"user": created}
+
+
+@router.patch("/users/{user_id}")
+async def update_user(request: Request, user_id: str, payload: UserUpdateRequest) -> dict[str, object]:
+    user = require_admin(request)
+    updated = request.app.state.registry.update_user(
+        user_id,
+        admin=payload.admin,
+        disabled=payload.disabled,
+        graphs=payload.graphs,
+        updated_by=user.user_id,
+    )
+    return {"user": updated}
+
+
+@router.post("/users/{user_id}/token")
+async def rotate_user_token(request: Request, user_id: str, payload: UserTokenRotateRequest) -> dict[str, object]:
+    user = require_admin(request)
+    return request.app.state.registry.rotate_user_token(user_id, token=payload.token, updated_by=user.user_id)
+
+
+@router.delete("/users/{user_id}")
+async def delete_user(request: Request, user_id: str) -> dict[str, object]:
+    require_admin(request)
+    request.app.state.registry.delete_user(user_id)
+    return {"user": user_id, "deleted": True}

@@ -190,6 +190,40 @@ print(scores, result["beliefs"], posterior)
 `persist=false` belief propagation is a read operation. `persist=true` stores the
 posterior and trace, so it requires graph write access.
 
+## Auth Management
+
+Administrators can create users, grant graph access, rotate tokens, and disable
+users without restarting the server:
+
+```bash
+curl -X POST http://127.0.0.1:8719/admin/users \
+  -H 'Authorization: Bearer admin-dev-token' \
+  -H 'Content-Type: application/json' \
+  -d '{"user_id":"bob","token":"bob-dev-token","graphs":{"alice_memory":"read"}}'
+
+curl -X POST http://127.0.0.1:8719/admin/users/bob/token \
+  -H 'Authorization: Bearer admin-dev-token' \
+  -H 'Content-Type: application/json' \
+  -d '{}'
+
+curl -X PATCH http://127.0.0.1:8719/admin/users/bob \
+  -H 'Authorization: Bearer admin-dev-token' \
+  -H 'Content-Type: application/json' \
+  -d '{"disabled":true}'
+```
+
+The generated token is returned only by the rotation response. User list and get
+responses report `has_token` but do not expose token values. Dynamic users and
+token overrides are stored in `<data_dir>/server-state.json`; do not commit real
+tokens.
+
+```python
+admin = TongGraphClient("http://127.0.0.1:8719", token="admin-dev-token")
+admin.create_user("bob", token="bob-dev-token", graphs={"alice_memory": "read"})
+rotated = admin.rotate_user_token("bob")
+admin.update_user("bob", disabled=True)
+```
+
 ## Operations
 
 ```bash

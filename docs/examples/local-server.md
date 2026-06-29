@@ -154,6 +154,42 @@ curl -X DELETE http://127.0.0.1:8719/graphs/alice_memory/snapshots/$SNAPSHOT_ID 
 Snapshots are in-memory, read-only, TTL-bound resources. They are not persisted
 across server restart.
 
+
+## Inference
+
+The Python client also exposes probability transfer and finite-discrete belief
+propagation endpoints:
+
+```python
+from tonggraph.server.client import TongGraphClient
+
+client = TongGraphClient("http://127.0.0.1:8719", token="alice-dev-token")
+graph = client.graph("alice_memory")
+
+source = graph.add_node("source")
+target = graph.add_node("target")
+graph.add_edge(source, target, "P", properties={"probability": "0.5"})
+
+scores = graph.propagate({source: 1.0}, steps=1, edge_type="P")
+
+parent = graph.add_variable("binary", owner_id=source, prior={"p": 0.6})
+child = graph.add_variable("binary", owner_id=target)
+graph.add_cpd(child, [parent], [0.9, 0.1, 0.2, 0.8])
+
+result = graph.belief_propagation(
+    [child],
+    evidence={parent: "true"},
+    damping=0.0,
+    persist=True,
+)
+posterior = graph.posterior(child)
+
+print(scores, result["beliefs"], posterior)
+```
+
+`persist=false` belief propagation is a read operation. `persist=true` stores the
+posterior and trace, so it requires graph write access.
+
 ## Operations
 
 ```bash

@@ -17,7 +17,7 @@ from .config import ServerConfig, load_config
 from .errors import ServerError, error_payload, key_error_handler, server_error_handler, validation_error_handler, value_error_handler
 from .metrics import RequestMetrics
 from .registry import GraphRegistry
-from .routes import admin, compute, graphs, health, operations, query, records, retrieval, snapshots
+from .routes import admin, compute, graphs, health, inference, operations, query, records, retrieval, snapshots
 
 logger = logging.getLogger("tonggraph.server")
 
@@ -100,6 +100,7 @@ def create_app(config: ServerConfig | str | None = None) -> FastAPI:
     app.include_router(retrieval.router)
     app.include_router(query.router)
     app.include_router(compute.router)
+    app.include_router(inference.router)
     app.include_router(snapshots.router)
 
     return app

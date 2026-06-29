@@ -126,3 +126,73 @@ class ComputeBatchRequest(BaseModel):
 
 class SnapshotCreateRequest(BaseModel):
     ttl_seconds: float = Field(default=600.0, gt=0, le=3600.0)
+
+
+class PropagateRequest(BaseModel):
+    seeds: dict[int, float]
+    steps: int
+    edge_property: str = "probability"
+    damping: float = 1.0
+    edge_type: str | None = None
+
+
+class LocalPropagateRequest(BaseModel):
+    seeds: dict[int, float]
+    radius: int = 2
+    query_nodes: list[int] | None = None
+    edge_type: str | None = None
+    edge_property: str = "probability"
+    damping: float = 1.0
+
+
+class VariableCreateRequest(BaseModel):
+    domain: str
+    owner_id: int | None = None
+    prior: dict[str, Any] | None = None
+    posterior: dict[str, Any] | None = None
+    states: list[str] | None = None
+
+
+class FactorCreateRequest(BaseModel):
+    input_variables: list[int]
+    output_variables: list[int]
+    function: str
+    parameters: dict[str, Any] | None = None
+
+
+class FactorTableCreateRequest(BaseModel):
+    variables: list[int]
+    values: list[float]
+
+
+class CpdCreateRequest(BaseModel):
+    variable_id: int
+    parent_variables: list[int]
+    values: list[float]
+
+
+class EvidenceCreateRequest(BaseModel):
+    variable_id: int
+    payload: dict[str, Any] | None = None
+
+
+class TraceCreateRequest(BaseModel):
+    payload: dict[str, Any] | None = None
+
+
+class ActiveSubgraphRequest(BaseModel):
+    query_variables: list[int]
+    evidence: dict[int, str] | None = None
+    radius: int = 2
+    max_nodes: int = 10000
+    max_factors: int = 50000
+
+
+class BeliefPropagationRequest(BaseModel):
+    query_variables: list[int] | None = None
+    evidence: dict[int, str] | None = None
+    radius: int = 2
+    max_iters: int = 1000
+    tolerance: float = 1e-6
+    damping: float = 0.2
+    persist: bool = False

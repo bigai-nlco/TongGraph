@@ -97,7 +97,13 @@ P2A 已实现。当前实现包括：
 
 ## P2B 完成情况
 
-P2B 已实现。当前实现包括：
+P2B 已实现并已做独立本地提交。提交信息为：
+
+```text
+feat(server): add operations metrics and request logging
+```
+
+当前实现包括：
 
 - `operations` 配置段：`request_logging`、`request_timeout_seconds`、`metrics`。
 - 请求日志：method、path、status、duration、request id、user id、graph name。
@@ -110,13 +116,25 @@ P2B 已实现。当前实现包括：
 - ASGI lifespan shutdown 会调用 registry 关闭 graph worker，释放 open 状态。
 - P2B operations 集成测试。
 
+## P2C 完成情况
+
+P2C 已实现。当前实现包括：
+
+- `server.routes.inference`，把概率传播和 belief propagation 相关 SDK 能力暴露为 HTTP API。
+- 读权限 endpoint：`propagate()`、`local_propagate()`、变量/因子/证据/trace 读取、`posterior()`、active subgraph 编译、`persist=false` 的 belief propagation。
+- 写权限 endpoint：创建 variable、factor、factor table、CPD、evidence、trace，以及 `persist=true` 的 belief propagation。
+- inference 请求 schema：概率传播、变量、因子、factor table、CPD、证据、trace、active subgraph、belief propagation。
+- `Variable`、`Factor`、`Evidence`、`Trace` 的 JSON-compatible 序列化。
+- Python HTTP client wrappers：`propagate()`、`local_propagate()`、`add_variable()`、`get_variable()`、`posterior()`、`add_factor()`、`get_factor()`、`add_factor_table()`、`add_cpd()`、`add_evidence()`、`get_evidence()`、`add_trace()`、`get_trace()`、`compile_active_subgraph()`、`belief_propagation()`。
+- P2C server/client 集成测试覆盖概率传播、BP、权限和 Python client workflow。
+
 当前已知边界：
 
-- 尚未实现 inference endpoints。
 - 尚未实现 token 轮换或更完整的用户管理接口。
 - Python client 是同步 client，不负责启动或管理 server 进程。
 - Timeout 在 ASGI 请求层生效，不会强行杀掉已经进入 native/Rust 层的 graph worker 操作。
 - Snapshot 是内存资源，不会跨 server restart 保留。
+- P2C 暂不提供 snapshot inference endpoints；inference API 作用于 live graph。
 - Cypher 读写判断使用关键字启发式；复杂 Cypher 权限策略后续需要加强。
 - 向量检索仍为 exact scan，推荐规模边界需要后续 benchmark 文档确认。
 
@@ -287,7 +305,7 @@ tonggraph-server = "tonggraph.server.cli:main"
 | `server.routes.query` | structured query、Cypher、单请求事务块 | P0/P1 |
 | `server.routes.compute` | traversal、algorithms、`subgraph()`、`compute_batch()` | P1 |
 | `server.routes.snapshots` | TTL-bound read-only snapshot lifecycle、读取、查询和计算 | P1 |
-| `server.routes.inference` | probability transfer、BP | P2 |
+| `server.routes.inference` | probability transfer、BP | P2C |
 | `server.client` | Python HTTP client，返回 JSON-compatible dict/list | P2A |
 
 ### GraphRegistry 设计要点
@@ -361,7 +379,7 @@ GraphWorker
 | Python HTTP Client | P2A 已完成 | 接近嵌入式 SDK 的同步客户端接口，第一版返回 dict/list |
 | 认证增强 | P2 | token 轮换、用户管理辅助接口 |
 | 可观测性 | P2B 已完成 | 请求日志、耗时、错误计数、graph metrics |
-| 概率传播和 BP | P2 | propagate、local_propagate、belief_propagation |
+| 概率传播和 BP | P2C 已完成 | propagate、local_propagate、belief_propagation |
 | 备份/导出 | P3 | SQLite + sidecar 备份、记录导出 |
 | 高级权限 | P3 | per-graph token、角色或 scope |
 | ANN 向量检索 | P3 | 可选 HNSW/ANN backend |
@@ -446,8 +464,8 @@ GraphWorker
 - Metrics endpoint：请求数、错误数、图数量、节点边数量、snapshot 数。已在 P2B 完成。
 - Graceful shutdown：等待正在执行的写操作完成后关闭 graph。已在 P2B 完成。
 - 请求超时配置。已在 P2B 完成。
-- 概率传播 endpoint：`propagate()`、`local_propagate()`。
-- BP endpoint：variables、factors、evidence、belief_propagation。
+- 概率传播 endpoint：`propagate()`、`local_propagate()`。已在 P2C 完成。
+- BP endpoint：variables、factors、evidence、belief_propagation。已在 P2C 完成。
 - 配置文档和示例配置文件。
 - Exact vector search benchmark：至少覆盖 10k 和 100k vectors/index 的本地基准。
 

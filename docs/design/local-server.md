@@ -12,7 +12,8 @@ the Python package directly.
     authentication, graph-level access control, administrator graph creation,
     persisted server control-plane state, core storage/retrieval/query
     endpoints, traversal and runtime algorithms, batch compute, TTL-bound
-    read-only snapshots, a synchronous Python HTTP client, and basic operations
+    read-only snapshots, inference endpoints for probability transfer and
+    belief propagation, a synchronous Python HTTP client, and basic operations
     support for request logging, JSON metrics, and request timeout handling.
 
 ## Goal
@@ -161,6 +162,7 @@ Expected API groups:
 | Query | structured query DSL and selected Cypher endpoints |
 | Compute | traversal, algorithms, subgraph extraction, and batch compute |
 | Snapshots | TTL-bound read-only snapshots for stable reads, query, Cypher, and compute |
+| Inference | probability transfer, variables, factors, evidence, active subgraph compilation, and belief propagation |
 | Operations | request logging, JSON metrics, elapsed-time headers, local authentication |
 
 ## Concurrency Model

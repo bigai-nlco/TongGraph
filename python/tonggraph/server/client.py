@@ -499,6 +499,180 @@ class RemoteGraph:
     def compute_batch(self, jobs: list[dict[str, Any]]) -> list[Any]:
         return self.client._request("POST", f"{self.path}/compute/batch", {"jobs": jobs})["results"]
 
+    def propagate(
+        self,
+        seeds: dict[int, float],
+        steps: int,
+        edge_property: str = "probability",
+        damping: float = 1.0,
+        edge_type: str | None = None,
+    ) -> dict[str, float]:
+        return self.client._request(
+            "POST",
+            f"{self.path}/propagate",
+            {
+                "seeds": seeds,
+                "steps": steps,
+                "edge_property": edge_property,
+                "damping": damping,
+                "edge_type": edge_type,
+            },
+        )["scores"]
+
+    def local_propagate(
+        self,
+        seeds: dict[int, float],
+        radius: int = 2,
+        query_nodes: list[int] | None = None,
+        edge_type: str | None = None,
+        edge_property: str = "probability",
+        damping: float = 1.0,
+    ) -> dict[str, float]:
+        return self.client._request(
+            "POST",
+            f"{self.path}/local-propagate",
+            {
+                "seeds": seeds,
+                "radius": radius,
+                "query_nodes": query_nodes,
+                "edge_type": edge_type,
+                "edge_property": edge_property,
+                "damping": damping,
+            },
+        )["scores"]
+
+    def add_variable(
+        self,
+        domain: str,
+        owner_id: int | None = None,
+        prior: dict[str, Any] | None = None,
+        posterior: dict[str, Any] | None = None,
+        states: list[str] | None = None,
+    ) -> int:
+        return int(
+            self.client._request(
+                "POST",
+                f"{self.path}/variables",
+                {
+                    "domain": domain,
+                    "owner_id": owner_id,
+                    "prior": prior,
+                    "posterior": posterior,
+                    "states": states,
+                },
+            )["id"]
+        )
+
+    def get_variable(self, variable_id: int) -> dict[str, Any]:
+        return self.client._request("GET", f"{self.path}/variables/{variable_id}")["variable"]
+
+    def posterior(self, variable_id: int) -> dict[str, float]:
+        return self.client._request("GET", f"{self.path}/variables/{variable_id}/posterior")["posterior"]
+
+    def add_factor(
+        self,
+        input_variables: list[int],
+        output_variables: list[int],
+        function: str,
+        parameters: dict[str, Any] | None = None,
+    ) -> int:
+        return int(
+            self.client._request(
+                "POST",
+                f"{self.path}/factors",
+                {
+                    "input_variables": input_variables,
+                    "output_variables": output_variables,
+                    "function": function,
+                    "parameters": parameters,
+                },
+            )["id"]
+        )
+
+    def get_factor(self, factor_id: int) -> dict[str, Any]:
+        return self.client._request("GET", f"{self.path}/factors/{factor_id}")["factor"]
+
+    def add_factor_table(self, variables: list[int], values: list[float]) -> int:
+        return int(
+            self.client._request(
+                "POST",
+                f"{self.path}/factor-tables",
+                {"variables": variables, "values": values},
+            )["id"]
+        )
+
+    def add_cpd(self, variable_id: int, parent_variables: list[int], values: list[float]) -> int:
+        return int(
+            self.client._request(
+                "POST",
+                f"{self.path}/cpds",
+                {"variable_id": variable_id, "parent_variables": parent_variables, "values": values},
+            )["id"]
+        )
+
+    def add_evidence(self, variable_id: int, payload: dict[str, Any] | None = None) -> int:
+        return int(
+            self.client._request(
+                "POST",
+                f"{self.path}/evidence",
+                {"variable_id": variable_id, "payload": payload},
+            )["id"]
+        )
+
+    def get_evidence(self, evidence_id: int) -> dict[str, Any]:
+        return self.client._request("GET", f"{self.path}/evidence/{evidence_id}")["evidence"]
+
+    def add_trace(self, payload: dict[str, Any] | None = None) -> int:
+        return int(self.client._request("POST", f"{self.path}/traces", {"payload": payload})["id"])
+
+    def get_trace(self, trace_id: int) -> dict[str, Any]:
+        return self.client._request("GET", f"{self.path}/traces/{trace_id}")["trace"]
+
+    def compile_active_subgraph(
+        self,
+        query_variables: list[int],
+        evidence: dict[int, str] | None = None,
+        radius: int = 2,
+        max_nodes: int = 10000,
+        max_factors: int = 50000,
+    ) -> dict[str, Any]:
+        return self.client._request(
+            "POST",
+            f"{self.path}/inference/active-subgraph",
+            {
+                "query_variables": query_variables,
+                "evidence": evidence,
+                "radius": radius,
+                "max_nodes": max_nodes,
+                "max_factors": max_factors,
+            },
+        )["active_subgraph"]
+
+    def belief_propagation(
+        self,
+        query_variables: list[int] | None = None,
+        evidence: dict[int, str] | None = None,
+        radius: int = 2,
+        max_iters: int = 1000,
+        tolerance: float = 1e-6,
+        damping: float = 0.2,
+        persist: bool = False,
+    ) -> dict[str, Any]:
+        return self.client._request(
+            "POST",
+            f"{self.path}/belief-propagation",
+            {
+                "query_variables": query_variables,
+                "evidence": evidence,
+                "radius": radius,
+                "max_iters": max_iters,
+                "tolerance": tolerance,
+                "damping": damping,
+                "persist": persist,
+            },
+        )["result"]
+
+
 
 class RemoteSnapshot:
     """Read-only remote snapshot resource."""

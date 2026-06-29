@@ -25,6 +25,9 @@
   library HTTP APIs and JSON-compatible return values.
 - Adds TongGraph Server operations support with request logging, JSON metrics,
   elapsed-time headers, request timeout errors, and graph lifecycle summaries.
+- Adds TongGraph Server inference endpoints and Python client wrappers for
+  probability transfer, variables, factors, evidence, traces, active subgraphs,
+  and belief propagation.
 
 ### Changed
 

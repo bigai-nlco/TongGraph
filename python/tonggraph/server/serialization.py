@@ -21,6 +21,34 @@ def serialize(value: Any) -> Any:
             "labels": list(value.labels),
             "properties": serialize(dict(value.properties)),
         }
+    if _has_attrs(value, ["id", "owner_id", "domain", "states", "prior", "posterior"]):
+        return {
+            "id": value.id,
+            "owner_id": value.owner_id,
+            "domain": value.domain,
+            "states": serialize(list(value.states)),
+            "prior": serialize(dict(value.prior)),
+            "posterior": serialize(dict(value.posterior)),
+        }
+    if _has_attrs(value, ["id", "input_variables", "output_variables", "function", "parameters"]):
+        return {
+            "id": value.id,
+            "input_variables": serialize(list(value.input_variables)),
+            "output_variables": serialize(list(value.output_variables)),
+            "function": value.function,
+            "parameters": serialize(dict(value.parameters)),
+        }
+    if _has_attrs(value, ["id", "variable_id", "payload"]):
+        return {
+            "id": value.id,
+            "variable_id": value.variable_id,
+            "payload": serialize(dict(value.payload)),
+        }
+    if _has_attrs(value, ["id", "payload"]):
+        return {
+            "id": value.id,
+            "payload": serialize(dict(value.payload)),
+        }
     if _has_attrs(value, ["id", "source", "target", "edge_type", "properties"]):
         return {
             "id": value.id,

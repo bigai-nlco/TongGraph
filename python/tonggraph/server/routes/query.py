@@ -4,6 +4,7 @@ import re
 
 from fastapi import APIRouter, Request
 
+from ...query import query_dsl_schema
 from ..access import require_graph_access
 from ..schemas import CypherRequest, CypherTransactionRequest, QueryRequest
 from ..serialization import serialize
@@ -15,6 +16,12 @@ _WRITE_KEYWORDS = re.compile(r"\b(CREATE|MERGE|SET|REMOVE|DELETE|DETACH)\b", re.
 
 def _cypher_access(query: str) -> str:
     return "write" if _WRITE_KEYWORDS.search(query) else "read"
+
+
+@router.get("/query/schema")
+async def query_schema(request: Request, graph: str) -> dict[str, object]:
+    require_graph_access(request, graph, "read")
+    return {"schema": serialize(query_dsl_schema())}
 
 
 @router.post("/query")

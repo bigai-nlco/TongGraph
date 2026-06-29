@@ -3,7 +3,17 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 
 from ..access import require_graph_access
-from ..schemas import FullTextIndexRequest, TextSearchRequest, VectorBatchSearchRequest, VectorIndexRequest, VectorSearchRequest, VectorUpsertRequest
+from ..schemas import (
+    FullTextIndexRequest,
+    RetrieveContextRequest,
+    TextSearchRequest,
+    VectorBatchDeleteRequest,
+    VectorBatchSearchRequest,
+    VectorBatchUpsertRequest,
+    VectorIndexRequest,
+    VectorSearchRequest,
+    VectorUpsertRequest,
+)
 from ..serialization import serialize
 
 router = APIRouter(prefix="/graphs/{graph}")
@@ -61,6 +71,34 @@ async def search_text(request: Request, graph: str, index: str, payload: TextSea
     return request.app.state.registry.call(graph, op)
 
 
+@router.post("/retrieve/context")
+async def retrieve_context(request: Request, graph: str, payload: RetrieveContextRequest) -> dict[str, object]:
+    require_graph_access(request, graph, "read")
+
+    def op(graph_obj):
+        return {
+            "results": serialize(
+                graph_obj.retrieve_context(
+                    text_query=payload.text_query,
+                    text_index=payload.text_index,
+                    vector_query=payload.vector_query,
+                    vector_index=payload.vector_index,
+                    labels=payload.labels,
+                    edge_type=payload.edge_type,
+                    properties=payload.properties,
+                    radius=payload.radius,
+                    direction=payload.direction,
+                    limit=payload.limit,
+                    text_weight=payload.text_weight,
+                    vector_weight=payload.vector_weight,
+                    graph_weight=payload.graph_weight,
+                )
+            )
+        }
+
+    return request.app.state.registry.call(graph, op)
+
+
 @router.get("/vector/indexes")
 async def vector_indexes(request: Request, graph: str) -> dict[str, object]:
     require_graph_access(request, graph, "read")
@@ -84,6 +122,16 @@ async def drop_vector_index(request: Request, graph: str, index: str) -> dict[st
     return request.app.state.registry.call(graph, lambda graph_obj: (graph_obj.drop_vector_index(index), {"dropped": True, "name": index})[1])
 
 
+@router.put("/vector/{index}/batch")
+async def upsert_vectors(request: Request, graph: str, index: str, payload: VectorBatchUpsertRequest) -> dict[str, object]:
+    require_graph_access(request, graph, "write")
+    vectors = {int(entity_id): vector for entity_id, vector in payload.vectors.items()}
+    return request.app.state.registry.call(
+        graph,
+        lambda graph_obj: (graph_obj.upsert_vectors(index, vectors), {"upserted": True, "count": len(vectors)})[1],
+    )
+
+
 @router.put("/vector/{index}/{entity_id}")
 async def upsert_vector(request: Request, graph: str, index: str, entity_id: int, payload: VectorUpsertRequest) -> dict[str, object]:
     require_graph_access(request, graph, "write")
@@ -100,6 +148,15 @@ async def get_vector(request: Request, graph: str, index: str, entity_id: int) -
 async def delete_vector(request: Request, graph: str, index: str, entity_id: int) -> dict[str, object]:
     require_graph_access(request, graph, "write")
     return request.app.state.registry.call(graph, lambda graph_obj: (graph_obj.delete_vector(index, entity_id), {"deleted": True})[1])
+
+
+@router.post("/vector/{index}/delete-batch")
+async def delete_vectors(request: Request, graph: str, index: str, payload: VectorBatchDeleteRequest) -> dict[str, object]:
+    require_graph_access(request, graph, "write")
+    return request.app.state.registry.call(
+        graph,
+        lambda graph_obj: (graph_obj.delete_vectors(index, payload.entity_ids), {"deleted": True, "count": len(payload.entity_ids)})[1],
+    )
 
 
 @router.post("/vector/{index}/search")

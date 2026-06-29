@@ -5,7 +5,7 @@ from typing import Any
 from fastapi import APIRouter, Request
 
 from ..access import require_graph_access
-from ..schemas import EdgeCreateRequest, EdgeUpdateRequest, NodeCreateRequest, NodeUpdateRequest
+from ..schemas import EdgeBatchCreateRequest, EdgeCreateRequest, EdgeUpdateRequest, NodeBatchCreateRequest, NodeCreateRequest, NodeUpdateRequest
 from ..serialization import serialize
 
 router = APIRouter(prefix="/graphs/{graph}")
@@ -64,6 +64,12 @@ async def nodes_by_property(request: Request, graph: str, key: str, value: str |
     return {"ids": request.app.state.registry.call(graph, lambda graph_obj: graph_obj.nodes_with_property(key, parsed))}
 
 
+@router.get("/nodes/by-external-id/{external_id}")
+async def node_by_external_id(request: Request, graph: str, external_id: str) -> dict[str, object]:
+    require_graph_access(request, graph, "read")
+    return {"id": request.app.state.registry.call(graph, lambda graph_obj: graph_obj.get_node_id(external_id))}
+
+
 @router.get("/edges/by-type/{edge_type}")
 async def edges_by_type(request: Request, graph: str, edge_type: str) -> dict[str, object]:
     require_graph_access(request, graph, "read")
@@ -84,6 +90,18 @@ async def add_node(request: Request, graph: str, payload: NodeCreateRequest) -> 
     def op(graph_obj):
         node_id = graph_obj.add_node(payload.external_id, labels=payload.labels, properties=payload.properties)
         return {"id": node_id, "node": serialize(graph_obj.get_node(node_id))}
+
+    return request.app.state.registry.call(graph, op)
+
+
+@router.post("/nodes/batch")
+async def add_nodes(request: Request, graph: str, payload: NodeBatchCreateRequest) -> dict[str, object]:
+    require_graph_access(request, graph, "write")
+
+    def op(graph_obj):
+        records = [record.model_dump(exclude_none=True) for record in payload.records]
+        ids = graph_obj.add_nodes(records)
+        return {"ids": ids, "nodes": serialize([graph_obj.get_node(node_id) for node_id in ids])}
 
     return request.app.state.registry.call(graph, op)
 
@@ -125,6 +143,18 @@ async def add_edge(request: Request, graph: str, payload: EdgeCreateRequest) -> 
     def op(graph_obj):
         edge_id = graph_obj.add_edge(payload.source, payload.target, payload.edge_type, properties=payload.properties)
         return {"id": edge_id, "edge": serialize(graph_obj.get_edge(edge_id))}
+
+    return request.app.state.registry.call(graph, op)
+
+
+@router.post("/edges/batch")
+async def add_edges(request: Request, graph: str, payload: EdgeBatchCreateRequest) -> dict[str, object]:
+    require_graph_access(request, graph, "write")
+
+    def op(graph_obj):
+        records = [record.model_dump(exclude_none=True) for record in payload.records]
+        ids = graph_obj.add_edges(records)
+        return {"ids": ids, "edges": serialize([graph_obj.get_edge(edge_id) for edge_id in ids])}
 
     return request.app.state.registry.call(graph, op)
 

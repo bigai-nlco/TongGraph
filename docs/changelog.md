@@ -34,6 +34,9 @@
   dynamic users, disabled users, and token rotation.
 - Adds TongGraph Server local graph backup and restore APIs with `.tar.gz`
   archives for SQLite files and segment sidecars.
+- Adds TongGraph Server SDK gap endpoints and Python client wrappers for bulk
+  records, batch vector writes, context retrieval, query schema, controlled
+  import/export, and snapshot retrieval.
 
 ### Changed
 

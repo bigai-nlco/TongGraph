@@ -12,8 +12,9 @@ the Python package directly.
     authentication, graph-level access control, administrator graph creation,
     auth management with token rotation, persisted server control-plane state,
     core storage/retrieval/query
-    endpoints, traversal and runtime algorithms, batch compute, TTL-bound
-    read-only snapshots, inference endpoints for probability transfer and
+    endpoints, bulk record and vector writes, context retrieval, controlled
+    import/export, traversal and runtime algorithms, batch compute, TTL-bound
+    read-only snapshots with retrieval endpoints, inference endpoints for probability transfer and
     belief propagation, local graph backup/restore, a synchronous Python HTTP
     client, and basic operations support for request logging, JSON metrics, and
     request timeout handling.
@@ -62,7 +63,7 @@ In scope:
 - Administrator APIs for graph creation and graph permission management.
 - JSON request and response bodies for client compatibility.
 - Operational endpoints for health checks, graph lifecycle, compaction, refresh,
-  and local backup/restore.
+  local backup/restore, and controlled server-side import/export.
 
 Out of scope for the first server:
 
@@ -157,13 +158,13 @@ Expected API groups:
 | Auth and access | user identity, graph permissions, dynamic users, disabled users, and token rotation |
 | Admin | create graph, list graphs, grant graph access |
 | Graph lifecycle | open, close, compact, refresh |
-| Records | node and edge create/read/update/delete |
-| Retrieval | counts, ID scans, label/type/property lookups |
+| Records | node and edge create/read/update/delete plus bulk append |
+| Retrieval | counts, ID scans, external ID lookup, label/type/property lookups, and `retrieve_context()` |
 | Full-text search | index lifecycle and `search_text()` |
-| Vector search | exact-scan index lifecycle, vector writes, `search_vector()`, `search_vectors()`, and benchmarked scale guidance |
-| Query | structured query DSL and selected Cypher endpoints |
+| Vector search | exact-scan index lifecycle, single/batch vector writes, `search_vector()`, `search_vectors()`, and benchmarked scale guidance |
+| Query | structured query DSL, query schema, and selected Cypher endpoints |
 | Compute | traversal, algorithms, subgraph extraction, and batch compute |
-| Snapshots | TTL-bound read-only snapshots for stable reads, query, Cypher, and compute |
+| Snapshots | TTL-bound read-only snapshots for stable reads, retrieval, query, Cypher, and compute |
 | Inference | probability transfer, variables, factors, evidence, active subgraph compilation, and belief propagation |
 | Operations | request logging, JSON metrics, elapsed-time headers, local authentication, backup, and restore |
 
@@ -220,7 +221,9 @@ internal dashboards or health probes, request logs use Python logging, and
 request timeout handling returns stable JSON errors without attempting to kill
 native graph work already running in a worker thread. Backup/restore is local
 filesystem only: archives live under `data_dir/backups`, include the SQLite
-files and `.segments/` sidecar, and do not include in-memory snapshots. Vector
+files and `.segments/` sidecar, and do not include in-memory snapshots.
+Import/export is server-side and path-scoped under `data_dir/imports` and
+`data_dir/exports`; clients cannot pass arbitrary filesystem paths. Vector
 search is currently exact scan; local benchmark guidance in the examples
 recommends 10k vectors per index for comfortable interactive use and treats
 100k vectors as higher-latency, low-QPS or batch-oriented territory.

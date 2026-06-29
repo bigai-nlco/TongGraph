@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 
 from ..access import current_user, require_graph_access
-from ..schemas import ComputeBatchRequest, CypherRequest, QueryRequest, SnapshotCreateRequest, VectorBatchSearchRequest
+from ..schemas import ComputeBatchRequest, CypherRequest, QueryRequest, SnapshotCreateRequest, TextSearchRequest, VectorBatchSearchRequest, VectorSearchRequest
 from ..serialization import serialize
 
 router = APIRouter(prefix="/graphs/{graph}/snapshots")
@@ -148,6 +148,86 @@ async def snapshot_compute_batch(request: Request, graph: str, snapshot_id: str,
     return {
         "results": request.app.state.registry.call_snapshot(
             graph, snapshot_id, user.user_id, admin=user.admin, func=lambda snapshot: serialize(snapshot.compute_batch(payload.jobs))
+        )
+    }
+
+
+@router.get("/{snapshot_id}/fulltext/indexes")
+async def snapshot_fulltext_indexes(request: Request, graph: str, snapshot_id: str) -> dict[str, object]:
+    user = _user_for_snapshot(request, graph)
+    return {
+        "indexes": request.app.state.registry.call_snapshot(
+            graph, snapshot_id, user.user_id, admin=user.admin, func=lambda snapshot: serialize(snapshot.fulltext_indexes())
+        )
+    }
+
+
+@router.post("/{snapshot_id}/fulltext/{index}/search")
+async def snapshot_search_text(request: Request, graph: str, snapshot_id: str, index: str, payload: TextSearchRequest) -> dict[str, object]:
+    user = _user_for_snapshot(request, graph)
+
+    def search(snapshot):
+        return serialize(
+            snapshot.search_text(
+                index,
+                payload.query,
+                mode=payload.mode,
+                labels=payload.labels,
+                edge_type=payload.edge_type,
+                properties=payload.properties,
+                limit=payload.limit,
+                offset=payload.offset,
+            )
+        )
+
+    return {
+        "results": request.app.state.registry.call_snapshot(
+            graph, snapshot_id, user.user_id, admin=user.admin, func=search
+        )
+    }
+
+
+@router.get("/{snapshot_id}/vector/indexes")
+async def snapshot_vector_indexes(request: Request, graph: str, snapshot_id: str) -> dict[str, object]:
+    user = _user_for_snapshot(request, graph)
+    return {
+        "indexes": request.app.state.registry.call_snapshot(
+            graph, snapshot_id, user.user_id, admin=user.admin, func=lambda snapshot: serialize(snapshot.vector_indexes())
+        )
+    }
+
+
+@router.get("/{snapshot_id}/vector/{index}/{entity_id}")
+async def snapshot_get_vector(request: Request, graph: str, snapshot_id: str, index: str, entity_id: int) -> dict[str, object]:
+    user = _user_for_snapshot(request, graph)
+    return {
+        "vector": request.app.state.registry.call_snapshot(
+            graph, snapshot_id, user.user_id, admin=user.admin, func=lambda snapshot: serialize(snapshot.get_vector(index, entity_id))
+        )
+    }
+
+
+@router.post("/{snapshot_id}/vector/{index}/search")
+async def snapshot_search_vector(request: Request, graph: str, snapshot_id: str, index: str, payload: VectorSearchRequest) -> dict[str, object]:
+    user = _user_for_snapshot(request, graph)
+
+    def search(snapshot):
+        return serialize(
+            snapshot.search_vector(
+                index,
+                payload.query_vector,
+                labels=payload.labels,
+                edge_type=payload.edge_type,
+                properties=payload.properties,
+                min_score=payload.min_score,
+                limit=payload.limit,
+                offset=payload.offset,
+            )
+        )
+
+    return {
+        "results": request.app.state.registry.call_snapshot(
+            graph, snapshot_id, user.user_id, admin=user.admin, func=search
         )
     }
 

@@ -109,6 +109,73 @@ print(rows, nearest, stable_count)
 The first Python client returns JSON-compatible dict/list values. It does not
 start the server process; point it at an already running `tonggraph-server`.
 
+## Bulk Ingest And Context Retrieval
+
+Use batch writes for remote ingest, then combine text/vector candidates with graph
+expansion through `retrieve_context()`:
+
+```bash
+curl -X POST http://127.0.0.1:8719/graphs/alice_memory/nodes/batch \
+  -H 'Authorization: Bearer alice-dev-token' \
+  -H 'Content-Type: application/json' \
+  -d '{"records":[{"external_id":"doc:1","labels":["Document"],"properties":{"text":"graph memory retrieval"}},{"external_id":"chunk:1","labels":["Chunk"],"properties":{"text":"retrieval context"}}]}'
+
+curl -X POST http://127.0.0.1:8719/graphs/alice_memory/edges/batch \
+  -H 'Authorization: Bearer alice-dev-token' \
+  -H 'Content-Type: application/json' \
+  -d '{"records":[{"source":0,"target":1,"edge_type":"HAS_CHUNK"}]}'
+
+curl -X POST http://127.0.0.1:8719/graphs/alice_memory/retrieve/context \
+  -H 'Authorization: Bearer alice-dev-token' \
+  -H 'Content-Type: application/json' \
+  -d '{"text_index":"chunks","text_query":"graph retrieval","vector_index":"chunks","vector_query":[1.0,0.2,0.4],"radius":1,"limit":5}'
+```
+
+```python
+ids = graph.add_nodes([
+    {"external_id": "doc:1", "labels": ["Document"], "properties": {"text": "graph memory retrieval"}},
+    {"external_id": "chunk:1", "labels": ["Chunk"], "properties": {"text": "retrieval context"}},
+])
+graph.add_edges([{"source": ids[0], "target": ids[1], "edge_type": "HAS_CHUNK"}])
+
+graph.create_fulltext_index("chunks", ["text"])
+graph.create_vector_index("chunks", 3)
+graph.upsert_vectors("chunks", {ids[0]: [1.0, 0.2, 0.4], ids[1]: [0.9, 0.1, 0.3]})
+
+rows = graph.retrieve_context(
+    text_index="chunks",
+    text_query="graph retrieval",
+    vector_index="chunks",
+    vector_query=[1.0, 0.2, 0.4],
+    radius=1,
+    limit=5,
+)
+```
+
+## Controlled Import And Export
+
+Server-side import paths are resolved under `<data_dir>/imports/`; export paths
+are resolved under `<data_dir>/exports/`. Absolute paths and `..` escapes are
+rejected.
+
+```bash
+curl -X POST http://127.0.0.1:8719/graphs/alice_memory/import/nodes/jsonl \
+  -H 'Authorization: Bearer alice-dev-token' \
+  -H 'Content-Type: application/json' \
+  -d '{"path":"nodes.jsonl"}'
+
+curl -X POST http://127.0.0.1:8719/graphs/alice_memory/export/nodes/jsonl \
+  -H 'Authorization: Bearer alice-dev-token' \
+  -H 'Content-Type: application/json' \
+  -d '{"path":"exports/nodes.jsonl"}'
+```
+
+```python
+imported = graph.import_nodes_jsonl("nodes.jsonl")
+graph.export_nodes_jsonl("exports/nodes.jsonl")
+graph.export_query_rows_jsonl("exports/rows.jsonl", rows=[{"node": imported[0]}])
+```
+
 ## Traversal And Compute
 
 ```bash
@@ -141,6 +208,16 @@ curl -X POST http://127.0.0.1:8719/graphs/alice_memory/snapshots/$SNAPSHOT_ID/qu
   -H 'Authorization: Bearer alice-dev-token' \
   -H 'Content-Type: application/json' \
   -d '{"spec":{"match":[{"node":"n","external_id":"alice"}]}}'
+
+curl -X POST http://127.0.0.1:8719/graphs/alice_memory/snapshots/$SNAPSHOT_ID/fulltext/people/search \
+  -H 'Authorization: Bearer alice-dev-token' \
+  -H 'Content-Type: application/json' \
+  -d '{"query":"Alice","limit":3}'
+
+curl -X POST http://127.0.0.1:8719/graphs/alice_memory/snapshots/$SNAPSHOT_ID/vector/embeddings/search \
+  -H 'Authorization: Bearer alice-dev-token' \
+  -H 'Content-Type: application/json' \
+  -d '{"query_vector":[1.0,0.0],"limit":3}'
 
 curl -X POST http://127.0.0.1:8719/graphs/alice_memory/snapshots/$SNAPSHOT_ID/vector/embeddings/search-batch \
   -H 'Authorization: Bearer alice-dev-token' \

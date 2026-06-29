@@ -51,6 +51,10 @@ class NodeCreateRequest(BaseModel):
     properties: dict[str, Any] | None = None
 
 
+class NodeBatchCreateRequest(BaseModel):
+    records: list[NodeCreateRequest]
+
+
 class NodeUpdateRequest(BaseModel):
     external_id: str | None = None
     add_labels: list[str] | None = None
@@ -64,6 +68,10 @@ class EdgeCreateRequest(BaseModel):
     target: int
     edge_type: str
     properties: dict[str, Any] | None = None
+
+
+class EdgeBatchCreateRequest(BaseModel):
+    records: list[EdgeCreateRequest]
 
 
 class EdgeUpdateRequest(BaseModel):
@@ -101,6 +109,14 @@ class VectorUpsertRequest(BaseModel):
     vector: list[float]
 
 
+class VectorBatchUpsertRequest(BaseModel):
+    vectors: dict[int, list[float]]
+
+
+class VectorBatchDeleteRequest(BaseModel):
+    entity_ids: list[int]
+
+
 class VectorSearchRequest(BaseModel):
     query_vector: list[float]
     labels: list[str] | None = None
@@ -124,6 +140,41 @@ class VectorBatchSearchRequest(BaseModel):
 class QueryRequest(BaseModel):
     spec: dict[str, Any]
     profile: bool = False
+
+
+class RetrieveContextRequest(BaseModel):
+    text_query: str | None = None
+    text_index: str | None = None
+    vector_query: list[float] | None = None
+    vector_index: str | None = None
+    labels: list[str] | None = None
+    edge_type: str | None = None
+    properties: dict[str, Any] | None = None
+    radius: int = 1
+    direction: str = "both"
+    limit: int = 20
+    text_weight: float = 1.0
+    vector_weight: float = 1.0
+    graph_weight: float = 0.1
+
+
+class ImportPathRequest(BaseModel):
+    path: str
+
+
+class ExportNodesRequest(BaseModel):
+    path: str
+    nodes: list[int] | None = None
+
+
+class ExportEdgesRequest(BaseModel):
+    path: str
+    edges: list[int] | None = None
+
+
+class ExportRowsRequest(BaseModel):
+    path: str
+    rows: list[dict[str, Any]]
 
 
 class CypherRequest(BaseModel):

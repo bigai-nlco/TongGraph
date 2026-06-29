@@ -243,6 +243,10 @@ class RemoteGraph:
     def nodes_with_property(self, key: str, value: Any | None = None) -> list[int]:
         return self.client._request("GET", f"{self.path}/nodes/by-property", query={"key": key, "value": value})["ids"]
 
+    def get_node_id(self, external_id: str) -> int | None:
+        value = self.client._request("GET", f"{self.path}/nodes/by-external-id/{_quote(external_id)}")["id"]
+        return None if value is None else int(value)
+
     def edges_by_type(self, edge_type: str) -> list[int]:
         return self.client._request("GET", f"{self.path}/edges/by-type/{_quote(edge_type)}")["ids"]
 
@@ -262,6 +266,9 @@ class RemoteGraph:
                 {"external_id": external_id, "labels": labels, "properties": properties},
             )["id"]
         )
+
+    def add_nodes(self, records: list[dict[str, Any]]) -> list[int]:
+        return self.client._request("POST", f"{self.path}/nodes/batch", {"records": records})["ids"]
 
     def get_node(self, node_id: int) -> dict[str, Any]:
         return self.client._request("GET", f"{self.path}/nodes/{node_id}")["node"]
@@ -304,6 +311,9 @@ class RemoteGraph:
                 {"source": source, "target": target, "edge_type": edge_type, "properties": properties},
             )["id"]
         )
+
+    def add_edges(self, records: list[dict[str, Any]]) -> list[int]:
+        return self.client._request("POST", f"{self.path}/edges/batch", {"records": records})["ids"]
 
     def get_edge(self, edge_id: int) -> dict[str, Any]:
         return self.client._request("GET", f"{self.path}/edges/{edge_id}")["edge"]
@@ -405,11 +415,21 @@ class RemoteGraph:
             ]
         )
 
+    def upsert_vectors(self, index: str, vectors: dict[int, list[float]]) -> bool:
+        return bool(self.client._request("PUT", f"{self.path}/vector/{_quote(index)}/batch", {"vectors": vectors})["upserted"])
+
     def get_vector(self, index: str, entity_id: int) -> list[float]:
         return self.client._request("GET", f"{self.path}/vector/{_quote(index)}/{entity_id}")["vector"]
 
     def delete_vector(self, index: str, entity_id: int) -> bool:
         return bool(self.client._request("DELETE", f"{self.path}/vector/{_quote(index)}/{entity_id}")["deleted"])
+
+    def delete_vectors(self, index: str, entity_ids: list[int]) -> bool:
+        return bool(
+            self.client._request("POST", f"{self.path}/vector/{_quote(index)}/delete-batch", {"entity_ids": entity_ids})[
+                "deleted"
+            ]
+        )
 
     def search_vector(
         self,
@@ -453,8 +473,68 @@ class RemoteGraph:
             },
         )["results"]
 
+    def retrieve_context(
+        self,
+        text_query: str | None = None,
+        text_index: str | None = None,
+        vector_query: list[float] | None = None,
+        vector_index: str | None = None,
+        labels: list[str] | None = None,
+        edge_type: str | None = None,
+        properties: dict[str, Any] | None = None,
+        radius: int = 1,
+        direction: str = "both",
+        limit: int = 20,
+        text_weight: float = 1.0,
+        vector_weight: float = 1.0,
+        graph_weight: float = 0.1,
+    ) -> list[dict[str, Any]]:
+        return self.client._request(
+            "POST",
+            f"{self.path}/retrieve/context",
+            {
+                "text_query": text_query,
+                "text_index": text_index,
+                "vector_query": vector_query,
+                "vector_index": vector_index,
+                "labels": labels,
+                "edge_type": edge_type,
+                "properties": properties,
+                "radius": radius,
+                "direction": direction,
+                "limit": limit,
+                "text_weight": text_weight,
+                "vector_weight": vector_weight,
+                "graph_weight": graph_weight,
+            },
+        )["results"]
+
+    def query_schema(self) -> dict[str, Any]:
+        return self.client._request("GET", f"{self.path}/query/schema")["schema"]
+
     def query(self, spec: dict[str, Any], profile: bool = False) -> Any:
         return self.client._request("POST", f"{self.path}/query", {"spec": spec, "profile": profile})["result"]
+
+    def import_nodes_csv(self, path: str) -> list[int]:
+        return self.client._request("POST", f"{self.path}/import/nodes/csv", {"path": path})["ids"]
+
+    def import_edges_csv(self, path: str) -> list[int]:
+        return self.client._request("POST", f"{self.path}/import/edges/csv", {"path": path})["ids"]
+
+    def import_nodes_jsonl(self, path: str) -> list[int]:
+        return self.client._request("POST", f"{self.path}/import/nodes/jsonl", {"path": path})["ids"]
+
+    def import_edges_jsonl(self, path: str) -> list[int]:
+        return self.client._request("POST", f"{self.path}/import/edges/jsonl", {"path": path})["ids"]
+
+    def export_nodes_jsonl(self, path: str, nodes: list[int] | None = None) -> dict[str, Any]:
+        return self.client._request("POST", f"{self.path}/export/nodes/jsonl", {"path": path, "nodes": nodes})
+
+    def export_edges_jsonl(self, path: str, edges: list[int] | None = None) -> dict[str, Any]:
+        return self.client._request("POST", f"{self.path}/export/edges/jsonl", {"path": path, "edges": edges})
+
+    def export_query_rows_jsonl(self, path: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
+        return self.client._request("POST", f"{self.path}/export/query-rows/jsonl", {"path": path, "rows": rows})
 
     def cypher(
         self,
@@ -778,6 +858,57 @@ class RemoteSnapshot:
 
     def get_edge(self, edge_id: int) -> dict[str, Any]:
         return self.client._request("GET", f"{self.path}/edges/{edge_id}")["edge"]
+
+    def fulltext_indexes(self) -> list[dict[str, Any]]:
+        return self.client._request("GET", f"{self.path}/fulltext/indexes")["indexes"]
+
+    def search_text(
+        self,
+        index: str,
+        query: str,
+        mode: str = "all",
+        labels: list[str] | None = None,
+        edge_type: str | None = None,
+        properties: dict[str, Any] | None = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        return self.client._request(
+            "POST",
+            f"{self.path}/fulltext/{_quote(index)}/search",
+            {
+                "query": query,
+                "mode": mode,
+                "labels": labels,
+                "edge_type": edge_type,
+                "properties": properties,
+                "limit": limit,
+                "offset": offset,
+            },
+        )["results"]
+
+    def vector_indexes(self) -> list[dict[str, Any]]:
+        return self.client._request("GET", f"{self.path}/vector/indexes")["indexes"]
+
+    def get_vector(self, index: str, entity_id: int) -> list[float]:
+        return self.client._request("GET", f"{self.path}/vector/{_quote(index)}/{entity_id}")["vector"]
+
+    def search_vector(
+        self,
+        index: str,
+        query_vector: list[float],
+        labels: list[str] | None = None,
+        edge_type: str | None = None,
+        properties: dict[str, Any] | None = None,
+        min_score: float | None = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        return self.client._request(
+            "POST",
+            f"{self.path}/vector/{_quote(index)}/search",
+            _vector_search_body(query_vector, labels, edge_type, properties, min_score, limit, offset),
+        )["results"]
 
     def query(self, spec: dict[str, Any], profile: bool = False) -> Any:
         return self.client._request("POST", f"{self.path}/query", {"spec": spec, "profile": profile})["result"]

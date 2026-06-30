@@ -24,3 +24,4 @@ tonggraph-server.yml
 tmp_data/
 deploy/tonggraph-server.env
 deploy/.tonggraph/
+deploy/tonggraph-server.yml

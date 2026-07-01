@@ -2,7 +2,7 @@
 
 TongGraph currently runs as an embedded Python package: applications import the
 package, create a `Graph`, and call the Rust-backed engine in the same process.
-A local server would add an optional network access layer around that embedded
+The local server adds an optional network access layer around the embedded
 engine so other processes, tools, and clients can use TongGraph without loading
 the Python package directly.
 
@@ -48,7 +48,7 @@ TongGraph core / Python SDK
 
 ## Product Boundary
 
-The first server should be a local or internal-network service wrapper, not a
+The server is a local or internal-network service wrapper, not a
 distributed graph database or public managed database service.
 
 In scope:
@@ -114,11 +114,11 @@ to `server-state.json` and do not survive server restart.
 ## Implementation Layout
 
 The server should live under the Python package as an optional extra, not in the
-Rust core. The first implementation should wrap the existing Python `Graph` API
-and keep HTTP, authentication, access control, lifecycle management, and JSON
+Rust core. The implementation wraps the existing Python `Graph` API
+and keeps HTTP, authentication, access control, lifecycle management, and JSON
 serialization in Python.
 
-Recommended package layout:
+Current package layout:
 
 ```text
 python/tonggraph/server/
@@ -132,11 +132,11 @@ python/tonggraph/server/
   errors.py            # stable error mapping
   schemas.py           # request/response models
   serialization.py     # SDK records to JSON-compatible objects
-  routes/              # health, admin, records, retrieval, query, compute
+  routes/              # registered HTTP route modules
   client.py            # Python HTTP client
 ```
 
-The package metadata should expose server dependencies through
+The package metadata exposes server dependencies through
 `tonggraph[server]` and a console script such as `tonggraph-server`. Embedded SDK
 users should not need to install FastAPI/Uvicorn or other server-only
 dependencies.
@@ -172,11 +172,11 @@ Expected API groups:
 
 ## Concurrency Model
 
-The first implementation should use conservative concurrency:
+The implementation uses conservative concurrency:
 
 - One live `Graph` handle per writable graph.
-- One write lock per graph.
-- Writes execute serially for each graph.
+- One dedicated worker queue per graph.
+- Graph operations execute serially for each graph worker.
 - Cross-graph operations are independent.
 - Snapshot-based reads are preferred for stable long-running read workflows.
 
@@ -186,7 +186,7 @@ requirements for the first server.
 
 ## User And Graph Access
 
-The first internal multi-user model can be configuration-driven, with admin APIs
+The internal multi-user model is configuration-driven, with admin APIs
 for dynamic graph creation and permission changes:
 
 - A user is identified by a bearer token or equivalent internal credential.
@@ -236,9 +236,3 @@ guidance in the examples recommends 10k vectors per index for comfortable
 interactive use and treats 100k vectors as higher-latency, low-QPS or
 batch-oriented territory.
 
-## Development Plan
-
-The detailed development plan and priority list are maintained in the Chinese
-server development document:
-
-- [TongGraph Server 中文开发文档](../development/local-server-development.zh.md)

@@ -69,8 +69,6 @@ nav:
       - Cypher Compatibility: design/cypher-compatibility.md
       - Belief Propagation: design/belief-propagation.md
       - Persistence: design/persistence.md
-  - Development:
-      - Local Server Development 中文: development/local-server-development.zh.md
   - Examples:
       - Examples: examples/index.md
       - Property Graph Basics: examples/property-graph-basics.md
@@ -84,7 +82,6 @@ nav:
       - Belief Propagation: examples/belief-propagation.md
       - Benchmarks: examples/benchmarks.md
       - Local Server: examples/local-server.md
-      - Server Agent Graph Client 中文: examples/server-agent-graph-client.zh.md
 
 plugins:
   - search

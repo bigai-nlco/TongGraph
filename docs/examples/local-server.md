@@ -241,13 +241,13 @@ curl -X POST http://127.0.0.1:8719/graphs/alice_memory/import/nodes/jsonl \
 curl -X POST http://127.0.0.1:8719/graphs/alice_memory/export/nodes/jsonl \
   -H 'Authorization: Bearer alice-dev-token' \
   -H 'Content-Type: application/json' \
-  -d '{"path":"exports/nodes.jsonl"}'
+  -d '{"path":"nodes.jsonl"}'
 ```
 
 ```python
 imported = graph.import_nodes_jsonl("nodes.jsonl")
-graph.export_nodes_jsonl("exports/nodes.jsonl")
-graph.export_query_rows_jsonl("exports/rows.jsonl", rows=[{"node": imported[0]}])
+graph.export_nodes_jsonl("nodes.jsonl")
+graph.export_query_rows_jsonl("rows.jsonl", rows=[{"node": imported[0]}])
 ```
 
 ## Traversal And Compute
